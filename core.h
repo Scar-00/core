@@ -472,19 +472,27 @@ static void string_grow(String *self) {
 String string_new(void) {
     return (String){
         .type = STRING_SHORT,
-        .data = {0},
+        .data = {
+            .s = {
+                .data = {
+                    [23] = SHORT_STRING_LENGTH,
+                },
+            },
+        },
     };
 }
 
 String string_new_size(size_t size) {
-    String self = {0};
-    self = (String){
-        .type = size > SHORT_STRING_LENGTH ? STRING_LONG : STRING_SHORT,
+    String self = {
+        .type = size + 1 > SHORT_STRING_LENGTH ? STRING_LONG : STRING_SHORT,
     };
     if(self.type == STRING_LONG) {
-        self.data.l.cap = size;
+        self.data.l.cap = size + 1;
         self.data.l.ptr = global_allocator.alloc((size + 1) * sizeof(char));
+        memset(self.data.l.ptr, 0, (size + 1) * sizeof(char));
         CORE_ASSERT(self.data.l.ptr && "error: failed to allocate `String`");
+    }else {
+        self.data.s.data[23] = SHORT_STRING_LENGTH;
     }
     return self;
 }
@@ -536,7 +544,6 @@ String string_vformat(const char *fmt, va_list args) {
     String self = string_new_size(size);
     if(self.type == STRING_SHORT) {
         vsnprintf(self.data.s.data, size + 1, fmt, args_copy);
-        println("size = %zu", size);
         self.data.s.data[size] = '\0';
         self.data.s.data[23] = SHORT_STRING_LENGTH - size;
     }else {
@@ -846,16 +853,15 @@ void *file_raw(FileHandle self) {
 }
 
 String file_read(FileHandle self) {
-    size_t size = 0;
     fseek(self->fd, 0, SEEK_END);
-    size = ftell(self->fd);
+    size_t size = ftell(self->fd);
     rewind(self->fd);
     char *content = global_allocator.alloc((size + 1) * sizeof(char));
     if(!content)
         return string_new();
     fread(content, sizeof(char), size, self->fd);
     content[size] = '\0';
-    String str = string_from_parts(content, size, size);
+    String str = string_from_parts(content, size, size + 1);
     global_allocator.free(content);
     return str;
 }

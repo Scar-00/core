@@ -1,6 +1,5 @@
 #define CORE_IMPLEMENTATION
 #define CORE_DEBUG_ASSERT
-#define CORE_MEM_DEBUG
 #include "core.h"
 
 /*int start(size_t i) {
@@ -13,6 +12,49 @@ void end(size_t i) {
 }*/
 
 #include "gfx.h"
+
+void test_strings(void) {
+    {
+        String s = string_new();
+        assert(string_len(&s) == 0 && string_cap(&s) == 24);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_new_size(10);
+        assert(string_len(&s) == 0 && string_cap(&s) == 24);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_new_size(100);
+        assert(string_len(&s) == 0 && string_cap(&s) == 101);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_from("Hello World");
+        assert(string_len(&s) == 11);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_from("fsdgkdflnfsodnfsidbfskdifbsdif");
+        assert(string_len(&s) == 30 && string_cap(&s) > 30);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_from("fdsgdfgdfgdfgdfgfdfgffg");
+        //assert(string_len(&s) == 23);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_format("fdsgdfgdfgd%s", "fgdfgfdfgfff");
+        assert(string_len(&s) == 23);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_format("fsdgkdflnfsodn%s", "fsidbfskdifbsdif");
+        assert(string_len(&s) == 30 && string_cap(&s) > 30);
+        println("s = %s", string_cstr(&s));
+    }
+}
 
 int main(void) {
     /*ArenaAllocator arena = arena_new(64);
@@ -76,8 +118,6 @@ int main(void) {
         }
     }
     window_destroy(window);
-
-
 
     return 0;
 }

@@ -214,13 +214,18 @@ typedef struct Win32Window {
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     Win32Window *window = GetProp(hwnd, "CORE_WINDOW");
+    //println("wndproc = %p", (void*)window);
     switch(msg)
     {
         case WM_CLOSE: {
-            window->should_close = true;
+            if(window) {
+                window->should_close = true;
+            }
         }break;
         case WM_QUIT: {
-            window->should_close = true;
+            if(window) {
+                window->should_close = true;
+            }
         }break;
         case WM_DESTROY:
             PostQuitMessage(0);
@@ -299,6 +304,7 @@ void window_destroy(WindowHandle window) {
 void window_make_current(WindowHandle window) {(void)window;}
 
 bool window_should_close(WindowHandle window) {
+    println("should_close = %p", (void*)window);
     return ((Win32Window *)window)->should_close;
 }
 
@@ -325,6 +331,7 @@ static int get_key_mods(void) {
 }
 
 static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
+    //tables stolen from GLFW
     Key keycodes[512] = {0};
 
     keycodes[0x00B] = KEY_0;
@@ -464,6 +471,7 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
         /*case WM_CLOSE:
         break;*/
         case WM_CLOSE: {
+            println("msg_to_event = %p", (void*)window);
             window->should_close = true;
             DestroyWindow(hwnd);
         }break;
@@ -518,7 +526,6 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
 
             if (scancode == 0x136)
                 scancode = 0x36;
-            
             const Key key = keycodes[scancode];
 
             return window_event_key(key, action, mods);
@@ -531,11 +538,14 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
 }
 
 bool window_poll_event(WindowHandle window, WindowEvent *event) {
-    WaitMessage();
+    CORE_ASSERT(event != NULL && "cannot pass NULL to window_poll_event()");
+    //WaitMessage();
     MSG msg = {0};
+    //  FIXME(K): why tf does this allways return 1 instead of 0 when the message queue is empty
+    //  or why the fuck is the message queue never empty?
     int ret = PeekMessage(&msg, ((Win32Window *)window)->hwnd, 0, 0, PM_REMOVE);
 
-    if(ret == -1 || ret == 0) {
+    if(ret == 0) {
         return false;
     }
     TranslateMessage(&msg);
