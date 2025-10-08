@@ -9,19 +9,6 @@ extern "C" {
 
 typedef void *WindowHandle;
 
-typedef unsigned int WindowStyle_;
-typedef enum WindowStyle {
-    WINDOW_NOT_MOVEABLE         = CORE_BIT(0),
-    WINDOW_NOT_RESIZEABLE       = CORE_BIT(1),
-    WINDOW_VISILE               = CORE_BIT(2),
-}WindowStyle;
-
-typedef struct WindowCreateArgs {
-    StringView name;
-    size_t width, height;
-    WindowStyle_ style;
-}WindowCreateArgs;
-
 typedef enum MouseButton {
     MOUSE_BUTTON_LEFT = 0,
     MOUSE_BUTTON_RIGHT,
@@ -186,17 +173,37 @@ typedef struct WindowEvent {
     union {
         struct WindowMouseEvent { MouseButton button; KeyState state; size_t click_count; } mouse;
         struct WindowDoubleClickEvent { MouseButton button; } mouse_double_click;
-        struct WindowMouseMoveEvent { int x; int y; } mouse_move;
-        struct WindowKeyEvent { Key key ; KeyState state; int mods; } key;
-        struct WindowResizedEvent { int w; int h; } resized;
+        struct WindowMouseMoveEvent { i32 x; i32 y; } mouse_move;
+        struct WindowKeyEvent { Key key ; KeyState state; i32 mods; } key;
+        struct WindowResizedEvent { i32 w; i32 h; } resized;
     };
 }WindowEvent;
 
+typedef u32 WindowStyle_;
+typedef enum WindowStyle {
+    WINDOW_NOT_MOVEABLE         = CORE_BIT(0),
+    WINDOW_NOT_RESIZEABLE       = CORE_BIT(1),
+    WINDOW_VISILE               = CORE_BIT(2),
+}WindowStyle;
+
+typedef void (*WindowEventCallback)(WindowHandle window, WindowEvent event, void *user_data);
+
+typedef struct WindowCreateArgs {
+    StringView name;
+    size_t width, height;
+    WindowStyle_ style;
+    void *user_data;
+    WindowEventCallback event_callback;
+}WindowCreateArgs;
+
 WindowEvent window_event_mouse(MouseButton button, KeyState state, size_t click_count);
 WindowEvent window_event_double_click(MouseButton button);
-WindowEvent window_event_mouse_move(int x, int y);
-WindowEvent window_event_key(Key key, KeyState state, int mods);
+WindowEvent window_event_mouse_move(i32 x, i32 y);
+WindowEvent window_event_key(Key key, KeyState state, i32 mods);
+WindowEvent window_event_resize(i32 width, i32 height);
 void window_event_print(WindowEvent *event);
+
+struct WindowMouseEvent *window_mouse_event(WindowEvent *event);
 
 WindowHandle window_create_opt(WindowCreateArgs args);
 #define window_create(...) window_create_opt((WindowCreateArgs){__VA_ARGS__})
@@ -205,8 +212,8 @@ void window_make_current(WindowHandle window);
 bool window_should_close(WindowHandle window);
 //void window_clear_flag(WindowHandle window, WindowStyle flag);
 //void window_set_flag(WindowHandle window, WindowStyle flag);
-bool window_poll_event(WindowHandle window, WindowEvent *event);
-bool window_wait_event(void);
+bool window_poll_event(WindowHandle window);
+bool window_wait_events(void);
 
 #ifdef PLATFORM_WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -216,20 +223,17 @@ typedef struct Win32Window {
     HWND hwnd;
     HINSTANCE hInstance;
     bool should_close;
-    Vec(WindowEvent) events;
+    void *user_data;
+    WindowEventCallback event_callback;
 }Win32Window, Window;
 
 static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg);
 
-static size_t wnd_proc_count;
-
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     Win32Window *window = GetProp(hwnd, "CORE_WINDOW");
     if(window) {
-        println("wnd-proc, %u", msg);
-        wnd_proc_count++;
         WindowEvent event = window_msg_to_event(window, (MSG){ .hwnd = hwnd, .message = msg, .wParam = wParam, .lParam = lParam });
-        vec_push(window->events, event);
+        (window->event_callback)((WindowHandle)window, event, window->user_data);
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
@@ -282,11 +286,15 @@ WindowHandle window_create_opt(WindowCreateArgs args) {
     ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
 
+    CORE_ASSERT(args.event_callback && "event_callback cannot be NULL");
+
     Win32Window *self = global_allocator.alloc(sizeof(Win32Window));
     *self = (Win32Window) {
         .hwnd = hwnd,
         .hInstance = hinstance,
-        .events = vec_new(),
+        .should_close = false,
+        .user_data = args.user_data,
+        .event_callback = args.event_callback,
     };
     SetProp(self->hwnd, "CORE_WINDOW", self);
     return self;
@@ -295,9 +303,6 @@ WindowHandle window_create_opt(WindowCreateArgs args) {
 void window_destroy(WindowHandle window) {
     RemoveProp(((Win32Window *)window)->hwnd, "CORE_WINDOW");
     DestroyWindow(((Win32Window *)window)->hwnd);
-    println("wnd_proc_count = %zu", wnd_proc_count);
-    vec_dump(((Win32Window *)window)->events);
-    vec_destroy(((Win32Window *)window)->events);
 }
 
 void window_make_current(WindowHandle window) {(void)window;}
@@ -309,8 +314,8 @@ bool window_should_close(WindowHandle window) {
 //void window_clear_flag(Win32Window *window, WindowStyle flag) {}
 //void window_set_flag(Win32Window *window, WindowStyle flag) {}
 
-static int get_key_mods(void) {
-    int mods = 0;
+static i32 get_key_mods(void) {
+    i32 mods = 0;
 
     if (GetKeyState(VK_SHIFT) & 0x8000)
         mods |= MOD_SHIFT;
@@ -460,7 +465,7 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
             _glfw.win32.scancodes[keycodes[scancode]] = scancode;
     }*/
 
-    HWND hwnd = raw_msg.hwnd;
+    //HWND hwnd = raw_msg.hwnd;
     UINT msg = raw_msg.message;
     WPARAM wParam = raw_msg.wParam;
     LPARAM lParam = raw_msg.lParam;
@@ -509,8 +514,8 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
         case WM_SYSKEYDOWN:
         case WM_KEYDOWN: {
             const KeyState action = (HIWORD(lParam) & KF_UP) ? KEY_STATE_UP : KEY_STATE_DOWN;
-            const int mods = get_key_mods();
-            int scancode = (HIWORD(lParam) & (KF_EXTENDED | 0xff));
+            const i32 mods = get_key_mods();
+            i32 scancode = (HIWORD(lParam) & (KF_EXTENDED | 0xff));
             if(!scancode) {
                 scancode = MapVirtualKeyW((UINT) wParam, MAPVK_VK_TO_VSC);
             }
@@ -525,6 +530,9 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
             const Key key = keycodes[scancode];
 
             return window_event_key(key, action, mods);
+        }break;
+        case WM_SIZE: {
+            return window_event_resize(LOWORD(lParam), HIWORD(lParam));
         }break;
         default: {
             return (WindowEvent){0};
@@ -550,22 +558,16 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
     return true;
 }*/
 
-bool window_wait_event(void) {
+bool window_wait_events(void) {
     return WaitMessage();
 }
 
-bool window_poll_event(WindowHandle window, WindowEvent *event) {
-    CORE_ASSERT(event != NULL && "cannot pass NULL to window_poll_event()");
+void window_poll_events(WindowHandle window) {
     MSG msg = {0};
-    int ret = PeekMessage(&msg, ((Win32Window *)window)->hwnd, 0, 0, PM_REMOVE);
-    if(!ret) {
-        return false;
+    while(PeekMessage(&msg, ((Win32Window *)window)->hwnd, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
     }
-    TranslateMessage(&msg);
-    DispatchMessage(&msg);
-    assert(vec_len(((Win32Window*)window)->events) > 0 && "cannot not generate an event");
-    *event = vec_pop(((Win32Window*)window)->events);
-    return true;
 }
 
 WindowEvent window_event_mouse(MouseButton button, KeyState state, size_t click_count) {
@@ -588,17 +590,27 @@ WindowEvent window_event_double_click(MouseButton button) {
     };
 }
 
-WindowEvent window_event_mouse_move(int x, int y) {
+WindowEvent window_event_mouse_move(i32 x, i32 y) {
     return (WindowEvent) {
         .kind = WINDOW_EVENT_MOUSE_MOVE,
         .mouse_move = {x, y}
     };
 }
 
-WindowEvent window_event_key(Key key, KeyState state, int mods) {
+WindowEvent window_event_key(Key key, KeyState state, i32 mods) {
     return (WindowEvent) {
         .kind = WINDOW_EVENT_KEY,
         .key = {key, state, mods}
+    };
+}
+
+WindowEvent window_event_resize(i32 width, i32 height) {
+    return (WindowEvent) {
+        .kind = WINDOW_EVENT_RESIZED,
+        .resized = {
+            .w = width,
+            .h = height,
+        }
     };
 }
 
@@ -750,6 +762,13 @@ void window_event_print(WindowEvent *event) {
         }break;
         default: return;
     }
+}
+
+struct WindowMouseEvent *window_mouse_event(WindowEvent *event) {
+    if(event->kind != WINDOW_EVENT_MOUSE) {
+        return NULL;
+    }
+    return &event->mouse;
 }
 
 #elif defined(PLATFORM_POSIX)

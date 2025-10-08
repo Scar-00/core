@@ -13,50 +13,31 @@ void end(size_t i) {
 
 #include "gfx.h"
 
-void test_strings(void) {
-    {
-        String s = string_new();
-        assert(string_len(&s) == 0 && string_cap(&s) == 24);
-        println("s = %s", string_cstr(&s));
-    }
-    {
-        String s = string_new_size(10);
-        assert(string_len(&s) == 0 && string_cap(&s) == 24);
-        println("s = %s", string_cstr(&s));
-    }
-    {
-        String s = string_new_size(100);
-        assert(string_len(&s) == 0 && string_cap(&s) == 101);
-        println("s = %s", string_cstr(&s));
-    }
-    {
-        String s = string_from("Hello World");
-        assert(string_len(&s) == 11);
-        println("s = %s", string_cstr(&s));
-    }
-    {
-        String s = string_from("fsdgkdflnfsodnfsidbfskdifbsdif");
-        assert(string_len(&s) == 30 && string_cap(&s) > 30);
-        println("s = %s", string_cstr(&s));
-    }
-    {
-        String s = string_from("fdsgdfgdfgdfgdfgfdfgffg");
-        //assert(string_len(&s) == 23);
-        println("s = %s", string_cstr(&s));
-    }
-    {
-        String s = string_format("fdsgdfgdfgd%s", "fgdfgfdfgfff");
-        assert(string_len(&s) == 23);
-        println("s = %s", string_cstr(&s));
-    }
-    {
-        String s = string_format("fsdgkdflnfsodn%s", "fsidbfskdifbsdif");
-        assert(string_len(&s) == 30 && string_cap(&s) > 30);
-        println("s = %s", string_cstr(&s));
-    }
+void window_event_callback(WindowHandle window, WindowEvent event, void *user_data) {
+    CORE_UNUSED(window);
+    CORE_UNUSED(user_data);
+    window_event_print(&event);
 }
 
+static void window_test(void);
+static void test_strings(void);
+
 int main(void) {
+    window_test();
+
+    return 0;
+}
+
+static void window_test(void) {
+    WindowHandle window = window_create(.name = sv("Test"), .width = 400, .height = 400, .event_callback = window_event_callback);
+    while(!window_should_close(window)) {
+        window_wait_events();
+        window_poll_events(window);
+    }
+    window_destroy(window);
+}
+
+static void test(void) {
     /*ArenaAllocator arena = arena_new(64);
     Vec(uint32_t) vec = vec_new();
     for(size_t i = 0; i < 100; i++) {
@@ -109,15 +90,47 @@ int main(void) {
     string_dump(&content);
     string_destroy(&content);
     file_close(file);*/
+}
 
-    WindowHandle window = window_create(.name = sv("Test"), .width = 400, .height = 400);
-    while(!window_should_close(window)) {
-        WindowEvent event = {0};
-        while(window_poll_event(window, &event)) {
-            window_event_print(&event);
-        }
+static void test_strings(void) {
+    {
+        String s = string_new();
+        assert(string_len(&s) == 0 && string_cap(&s) == 24);
+        println("s = %s", string_cstr(&s));
     }
-    window_destroy(window);
-
-    return 0;
+    {
+        String s = string_new_size(10);
+        assert(string_len(&s) == 0 && string_cap(&s) == 24);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_new_size(100);
+        assert(string_len(&s) == 0 && string_cap(&s) == 101);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_from("Hello World");
+        assert(string_len(&s) == 11);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_from("fsdgkdflnfsodnfsidbfskdifbsdif");
+        assert(string_len(&s) == 30 && string_cap(&s) > 30);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_from("fdsgdfgdfgdfgdfgfdfgffg");
+        //assert(string_len(&s) == 23);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_format("fdsgdfgdfgd%s", "fgdfgfdfgfff");
+        assert(string_len(&s) == 23);
+        println("s = %s", string_cstr(&s));
+    }
+    {
+        String s = string_format("fsdgkdflnfsodn%s", "fsidbfskdifbsdif");
+        assert(string_len(&s) == 30 && string_cap(&s) > 30);
+        println("s = %s", string_cstr(&s));
+    }
 }

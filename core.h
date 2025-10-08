@@ -31,6 +31,21 @@ extern "C" {
 #define CORE_ASSERT(e)
 #endif
 
+#define CORE_UNUSED(var) (void)(var)
+
+typedef double              f64;
+typedef float               f32;
+typedef long long int       i64;
+typedef int                 i32;
+typedef short int           i16;
+typedef signed char         i8;
+
+//unsigned types
+typedef unsigned long long  u64;
+typedef unsigned int        u32;
+typedef unsigned short      u16;
+typedef unsigned char       u8;
+
 #define CORE_UNUSED(value) (void)(value)
 #define CORE_TODO(message) do { fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, message); abort(); } while(0)
 #define CORE_UNREACHABLE(message) do { fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message); abort(); } while(0)
@@ -170,7 +185,7 @@ void *ringbuffer_alloc(RingBuffer *self, size_t size);
 //  ----------------------------------- //
 //                 file                 //
 //  ----------------------------------- //
-typedef unsigned int FileMode_;
+typedef u32 FileMode_;
 typedef enum FileMode {
     FILE_READ       = CORE_BIT(0),
     FILE_WRITE      = CORE_BIT(1),
@@ -349,10 +364,10 @@ void *core_avec_to_vec_int(void *src, size_t elem_size);
 //  ----------------------------------- //
 //                 print                //
 //  ----------------------------------- //
-int print(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
-int println(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
-int fprint(FileHandle stream, const char *fmt, ...) CORE_PRINTF_FORMAT(2, 3);
-int fprintln(FileHandle stream, const char *fmt, ...) CORE_PRINTF_FORMAT(2, 3);
+i32 print(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
+i32 println(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
+i32 fprint(FileHandle stream, const char *fmt, ...) CORE_PRINTF_FORMAT(2, 3);
+i32 fprintln(FileHandle stream, const char *fmt, ...) CORE_PRINTF_FORMAT(2, 3);
 
 typedef enum LogLevel {
     CORE_TRACE,
@@ -371,13 +386,13 @@ void __core_log_file(LogLevel level, const char *file, const char *fmt, ...) COR
 //                flags                 //
 //  ----------------------------------- //
 typedef struct FlagContext {
-    int argc;
+    i32 argc;
     const char *const *argv;
     const char *program_name;
 }FlagContext;
 const char *const *flag_str(const char *lo, char sh, const char *const *def);
 
-void flags_parse(int argc, const char *const *argv);
+void flags_parse(i32 argc, const char *const *argv);
 */
 //  ----------------------------------- //
 //                context               //
@@ -1343,35 +1358,35 @@ void *core_avec_to_vec_int(void *src, size_t elem_size) {
 //  ----------------------------------- //
 //               print-impl             //
 //  ----------------------------------- //
-int print(const char *fmt, ...) {
+i32 print(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    int ret = vfprintf(stdout, fmt, args);
+    i32 ret = vfprintf(stdout, fmt, args);
     va_end(args);
     return ret;
 }
 
-int println(const char *fmt, ...) {
+i32 println(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    int ret = vfprintf(stdout, fmt, args);
+    i32 ret = vfprintf(stdout, fmt, args);
     va_end(args);
     printf("\n");
     return ret;
 }
 
-int fprint(FileHandle stream, const char *fmt, ...) {
+i32 fprint(FileHandle stream, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    int ret = vfprintf(file_raw(stream), fmt, args);
+    i32 ret = vfprintf(file_raw(stream), fmt, args);
     va_end(args);
     return ret;
 }
 
-int fprintln(FileHandle stream, const char *fmt, ...) {
+i32 fprintln(FileHandle stream, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    int ret = vfprintf(file_raw(stream), fmt, args);
+    i32 ret = vfprintf(file_raw(stream), fmt, args);
     va_end(args);
     fprint(file_raw(stream), "\n");
     return ret;
