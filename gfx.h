@@ -1,6 +1,10 @@
 #ifndef _CORE_GFX_H_
 #define _CORE_GFX_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "core.h"
 
 typedef void *WindowHandle;
@@ -194,13 +198,15 @@ WindowEvent window_event_mouse_move(int x, int y);
 WindowEvent window_event_key(Key key, KeyState state, int mods);
 void window_event_print(WindowEvent *event);
 
-WindowHandle window_create(WindowCreateArgs args);
+WindowHandle window_create_opt(WindowCreateArgs args);
+#define window_create(...) window_create_opt((WindowCreateArgs){__VA_ARGS__})
 void window_destroy(WindowHandle window);
 void window_make_current(WindowHandle window);
 bool window_should_close(WindowHandle window);
 //void window_clear_flag(WindowHandle window, WindowStyle flag);
 //void window_set_flag(WindowHandle window, WindowStyle flag);
 bool window_poll_event(WindowHandle window, WindowEvent *event);
+bool window_wait_event(void);
 
 #ifdef PLATFORM_WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -210,36 +216,25 @@ typedef struct Win32Window {
     HWND hwnd;
     HINSTANCE hInstance;
     bool should_close;
+    Vec(WindowEvent) events;
 }Win32Window, Window;
+
+static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg);
+
+static size_t wnd_proc_count;
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     Win32Window *window = GetProp(hwnd, "CORE_WINDOW");
-    //println("wndproc = %p", (void*)window);
-    switch(msg)
-    {
-        case WM_CLOSE: {
-            if(window) {
-                window->should_close = true;
-            }
-        }break;
-        case WM_QUIT: {
-            if(window) {
-                window->should_close = true;
-            }
-        }break;
-        case WM_DESTROY:
-            PostQuitMessage(0);
-        break;
-        case WM_PAINT: {
-
-        }break;
-        default:
-            return DefWindowProc(hwnd, msg, wParam, lParam);
+    if(window) {
+        println("wnd-proc, %u", msg);
+        wnd_proc_count++;
+        WindowEvent event = window_msg_to_event(window, (MSG){ .hwnd = hwnd, .message = msg, .wParam = wParam, .lParam = lParam });
+        vec_push(window->events, event);
     }
-    return 0;
+    return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-WindowHandle window_create(WindowCreateArgs args) {
+WindowHandle window_create_opt(WindowCreateArgs args) {
     HINSTANCE hinstance = GetModuleHandle(NULL);
     if(!hinstance) {
         return NULL;
@@ -291,6 +286,7 @@ WindowHandle window_create(WindowCreateArgs args) {
     *self = (Win32Window) {
         .hwnd = hwnd,
         .hInstance = hinstance,
+        .events = vec_new(),
     };
     SetProp(self->hwnd, "CORE_WINDOW", self);
     return self;
@@ -299,12 +295,14 @@ WindowHandle window_create(WindowCreateArgs args) {
 void window_destroy(WindowHandle window) {
     RemoveProp(((Win32Window *)window)->hwnd, "CORE_WINDOW");
     DestroyWindow(((Win32Window *)window)->hwnd);
+    println("wnd_proc_count = %zu", wnd_proc_count);
+    vec_dump(((Win32Window *)window)->events);
+    vec_destroy(((Win32Window *)window)->events);
 }
 
 void window_make_current(WindowHandle window) {(void)window;}
 
 bool window_should_close(WindowHandle window) {
-    println("should_close = %p", (void*)window);
     return ((Win32Window *)window)->should_close;
 }
 
@@ -471,9 +469,7 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
         /*case WM_CLOSE:
         break;*/
         case WM_CLOSE: {
-            println("msg_to_event = %p", (void*)window);
             window->should_close = true;
-            DestroyWindow(hwnd);
         }break;
         case WM_QUIT: {
             window->should_close = true;
@@ -537,9 +533,9 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
     return (WindowEvent){0};
 }
 
-bool window_poll_event(WindowHandle window, WindowEvent *event) {
+
+/*bool window_poll_event(WindowHandle window, WindowEvent *event) {
     CORE_ASSERT(event != NULL && "cannot pass NULL to window_poll_event()");
-    //WaitMessage();
     MSG msg = {0};
     //  FIXME(K): why tf does this allways return 1 instead of 0 when the message queue is empty
     //  or why the fuck is the message queue never empty?
@@ -551,6 +547,24 @@ bool window_poll_event(WindowHandle window, WindowEvent *event) {
     TranslateMessage(&msg);
     DispatchMessage(&msg);
     *event = window_msg_to_event((Win32Window *)window, msg);
+    return true;
+}*/
+
+bool window_wait_event(void) {
+    return WaitMessage();
+}
+
+bool window_poll_event(WindowHandle window, WindowEvent *event) {
+    CORE_ASSERT(event != NULL && "cannot pass NULL to window_poll_event()");
+    MSG msg = {0};
+    int ret = PeekMessage(&msg, ((Win32Window *)window)->hwnd, 0, 0, PM_REMOVE);
+    if(!ret) {
+        return false;
+    }
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
+    assert(vec_len(((Win32Window*)window)->events) > 0 && "cannot not generate an event");
+    *event = vec_pop(((Win32Window*)window)->events);
     return true;
 }
 
@@ -741,5 +755,9 @@ void window_event_print(WindowEvent *event) {
 #elif defined(PLATFORM_POSIX)
 
 #endif //PLATFORM_WIN32
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //_CORE_GFX_H_

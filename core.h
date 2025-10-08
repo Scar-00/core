@@ -229,7 +229,7 @@ void *core_vec_create_from_parts_internal(void *ptr, size_t size, size_t elem_si
 #define vec_from_parts(ty, ptr, size) core_vec_create_from_parts_internal((ptr), (size), sizeof(ty))
 #define vec_destroy(arr) (core_vec_destroy_internal(vec_header(arr)), arr = NULL)
 #define vec_push(arr, value) ((arr) = core_vec_maygrow_internal((arr), sizeof(*(arr))), (arr)[vec_header((arr))->len++] = (value))
-#define vec_pop(arr) (vec_header((arr))->len--)
+#define vec_pop(arr) (vec_header((arr))->len--, (arr)[vec_len((arr))])
 #define vec_put(arr, index, value) {\
         if(!arr) arr = core_vec_maygrow_internal((arr), (size_t)sizeof(*(arr)));\
         if((index) >= vec_len((arr))) {\
@@ -999,11 +999,13 @@ void *core_vec_maygrow_internal(void *arr, size_t elem_size) {
 
     if(vec_len(arr) >= vec_cap(arr)) {
         vec_cap(arr) = vec_cap(arr) == 0 ? DEFAULT_INITIAL_VECTOR_SIZE : vec_cap(arr) * 2;
-        ArrayHeader *tmp = global_allocator.realloc(vec_header(arr), (vec_cap(arr) * elem_size) + sizeof(ArrayHeader));
+        //ArrayHeader *tmp = global_allocator.realloc(vec_header(arr), (vec_cap(arr) * elem_size) + sizeof(ArrayHeader));
+        ArrayHeader *tmp = global_allocator.alloc(vec_cap(arr) * elem_size + sizeof(ArrayHeader));
         tmp++;
         vec_len(tmp) = vec_len(arr);
         vec_cap(tmp) = vec_cap(arr);
         memcpy(tmp, arr, vec_len(arr) * elem_size);
+        global_allocator.free(vec_header(arr));
         return tmp;
     }
     return arr;

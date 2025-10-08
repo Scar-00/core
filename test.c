@@ -63,12 +63,12 @@ int main(void) {
         vec_push(vec, i);
     }
 
-    avec_foreach(vec, item) {
+    vec_foreach(vec, item) {
         println("%d", *item);
     }
 
-    vec_dump(vec);
-    Slice(uint32_t) test = slice_from_vec(vec);
+    vec_dump(vec);*/
+    /*Slice(uint32_t) test = slice_from_vec(vec);
     println("ptr = %p, len = %zu", test.data, test.len);
 
     Vec(uint32_t) copy = slice_to_vec(test);
@@ -110,7 +110,7 @@ int main(void) {
     string_destroy(&content);
     file_close(file);*/
 
-    WindowHandle window = window_create((WindowCreateArgs){ .name = sv("Test"), .width = 400, .height = 400 });
+    WindowHandle window = window_create(.name = sv("Test"), .width = 400, .height = 400);
     while(!window_should_close(window)) {
         WindowEvent event = {0};
         while(window_poll_event(window, &event)) {
