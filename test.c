@@ -24,7 +24,6 @@ static void test_strings(void);
 
 int main(void) {
     window_test();
-
     return 0;
 }
 

@@ -162,7 +162,8 @@ typedef struct WindowEvent {
         WINDOW_EVENT_MOUSE,
         WINDOW_EVENT_MOUSE_DOUBLE_CLICK,
         WINDOW_EVENT_CLOSE,
-        WINDOW_EVENT_OPENED,
+        WINDOW_EVENT_CLOSE_REQUESTED,
+        WINDOW_EVENT_CREATED,
         WINDOW_EVENT_FOCUS_GAINED,
         WINDOW_EVENT_FOCUS_LOST,
         WINDOW_EVENT_MOUSE_MOVE,
@@ -227,12 +228,12 @@ typedef struct Win32Window {
     WindowEventCallback event_callback;
 }Win32Window, Window;
 
-static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg);
+static WindowEvent window_msg_to_event(Win32Window *window, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     Win32Window *window = GetProp(hwnd, "CORE_WINDOW");
     if(window) {
-        WindowEvent event = window_msg_to_event(window, (MSG){ .hwnd = hwnd, .message = msg, .wParam = wParam, .lParam = lParam });
+        WindowEvent event = window_msg_to_event(window, hwnd, msg, lParam, wParam);
         (window->event_callback)((WindowHandle)window, event, window->user_data);
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -333,7 +334,9 @@ static i32 get_key_mods(void) {
     return mods;
 }
 
-static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
+static WindowEvent window_msg_to_event(Win32Window *window, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    CORE_UNUSED(hwnd);
+
     //tables stolen from GLFW
     Key keycodes[512] = {0};
 
@@ -465,19 +468,19 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
             _glfw.win32.scancodes[keycodes[scancode]] = scancode;
     }*/
 
-    //HWND hwnd = raw_msg.hwnd;
-    UINT msg = raw_msg.message;
-    WPARAM wParam = raw_msg.wParam;
-    LPARAM lParam = raw_msg.lParam;
     switch(msg)
     {
-        /*case WM_CLOSE:
-        break;*/
         case WM_CLOSE: {
             window->should_close = true;
+            return (WindowEvent){ .kind = WINDOW_EVENT_CLOSE };
+        }break;
+        case WM_CREATE: {
+            //  FIXME(K): event is not emmited, probably because the `PROP`(window data) is still NULL when WM_CREATE is received
+            return (WindowEvent){ .kind = WINDOW_EVENT_CREATED };
         }break;
         case WM_QUIT: {
             window->should_close = true;
+            return (WindowEvent){ .kind = WINDOW_EVENT_CLOSE_REQUESTED };
         }break;
         case WM_DESTROY: {
             PostQuitMessage(0);
@@ -534,29 +537,15 @@ static WindowEvent window_msg_to_event(Win32Window *window, MSG raw_msg) {
         case WM_SIZE: {
             return window_event_resize(LOWORD(lParam), HIWORD(lParam));
         }break;
+        case WM_MOUSEMOVE: {
+            return window_event_mouse_move(LOWORD(lParam), HIWORD(lParam));
+        }break;
         default: {
             return (WindowEvent){0};
         }break;
     }
     return (WindowEvent){0};
 }
-
-
-/*bool window_poll_event(WindowHandle window, WindowEvent *event) {
-    CORE_ASSERT(event != NULL && "cannot pass NULL to window_poll_event()");
-    MSG msg = {0};
-    //  FIXME(K): why tf does this allways return 1 instead of 0 when the message queue is empty
-    //  or why the fuck is the message queue never empty?
-    int ret = PeekMessage(&msg, ((Win32Window *)window)->hwnd, 0, 0, PM_REMOVE);
-
-    if(ret == 0) {
-        return false;
-    }
-    TranslateMessage(&msg);
-    DispatchMessage(&msg);
-    *event = window_msg_to_event((Win32Window *)window, msg);
-    return true;
-}*/
 
 bool window_wait_events(void) {
     return WaitMessage();
@@ -759,6 +748,15 @@ void window_event_print(WindowEvent *event) {
         }break;
         case WINDOW_EVENT_RESIZED: {
             println("Resize { w: %d, h: %d }", event->resized.w, event->resized.h);
+        }break;
+        case WINDOW_EVENT_CREATED: {
+            println("Created {}");
+        }break;
+        case WINDOW_EVENT_CLOSE: {
+            println("Close {}");
+        }break;
+        case WINDOW_EVENT_CLOSE_REQUESTED: {
+            println("CloseRequested {}");
         }break;
         default: return;
     }

@@ -408,6 +408,19 @@ AString tmp_printf(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
 StringView tmp_copy(StringView self);
 StringView tmp_copy_str(String *self);
 
+typedef struct Bitmap {
+    char *data;
+    size_t width;
+    size_t height;
+    size_t stride;
+}Bitmap;
+
+Bitmap bitmap_new(size_t width, size_t height, size_t stride);
+Bitmap bitmap_from(const char *data, size_t width, size_t height, size_t stride);
+
+const char *bitmap_at(size_t x, size_t y);
+void bitmap_put(size_t x, size_t y, void *data);
+
 #ifdef CORE_IMPLEMENTATION
 //  ----------------------------------- //
 //             string-impl              //
