@@ -6,6 +6,7 @@
 ---@class Args
 ---@field errors ?ErrorFlag[]
 ---@field no_errors ?ErrorFlag[]
+---@field libs ?string[]
 ---@field custom ?string[]
 
 ---@class JoinHandle
@@ -39,7 +40,8 @@
 
 ---@param build Build
 return function (build)
-    local tool_chain = "Clang";
+    ---@type ToolChain
+    local tool_chain = "Msvc";
     local warnings = { "Error", "Pedantic", "All", "Extra" };
     local no_warnings = { "DeprecatedDeclarations" };
 
@@ -48,7 +50,7 @@ return function (build)
         no_warnings = {};
     end
 
-    local main = build:add_binary({
+    local test = build:add_binary({
         tool_chain = tool_chain,
         opt_level = build:default_opt_level(),
         files = {
@@ -59,13 +61,14 @@ return function (build)
         args = {
             warnings = warnings,
             no_warnings = no_warnings,
+            libs = { "-luser32" }
         }
     });
-    local test = main:build_and_install();
-    if not test then
-        error(test);
+    local test_exe = test:build_and_install();
+    if not test_exe then
+        error(test_exe);
     end
     if build:wants_run() then
-        build:run(test);
+        build:run(test_exe);
     end
 end

@@ -16,13 +16,18 @@ void end(size_t i) {
 void window_event_callback(WindowHandle window, WindowEvent event, void *user_data) {
     CORE_UNUSED(window);
     CORE_UNUSED(user_data);
-    window_event_print(&event);
+    if(event.kind != WINDOW_EVENT_MOUSE_MOVE) {
+        window_event_print(&event);
+    }
 }
 
+static void test(void);
 static void window_test(void);
 static void test_strings(void);
 
 int main(void) {
+    CORE_UNUSED(test);
+    CORE_UNUSED(test_strings);
     window_test();
     return 0;
 }

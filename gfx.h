@@ -306,7 +306,7 @@ void window_destroy(WindowHandle window) {
     DestroyWindow(((Win32Window *)window)->hwnd);
 }
 
-void window_make_current(WindowHandle window) {(void)window;}
+void window_make_current(WindowHandle window) { CORE_UNUSED(window);}
 
 bool window_should_close(WindowHandle window) {
     return ((Win32Window *)window)->should_close;
