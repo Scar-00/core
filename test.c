@@ -5,14 +5,14 @@
 
 #include <unistd.h>
 
-/*int start(size_t i) {
+int start(size_t i) {
     println("Start = %zu", i);
     return i + 1;
 }
 
 void end(size_t i) {
     println("End = %zu", i);
-}*/
+}
 
 //#include "gfx.h"
 
@@ -28,13 +28,10 @@ static void test(void);
 //static void window_test(void);
 static void test_strings(void);
 
-int main(int argc, char **argv) {
+int main(void) {
     CORE_UNUSED(test);
     CORE_UNUSED(test_strings);
-    for(int i = 0; i < argc; i++) {
-        println("%d = %s", i, argv[i]);
-        sleep(1);
-    }
+    test();
     return 0;
 }
 
@@ -72,27 +69,28 @@ static void test(void) {
     Slice(uint32_t) foo = test;
     bar(foo);*/
 
-    /*AString tmp = tmp_printf("Hello, %s!dfgdfgdhdfhdhdhdhdg", "World");
+    AString tmp = tmp_printf("Hello, %s!dfgdfgdhdfhdhdhdhdg", "World");
     AString tmp1 = tmp_printf("Hello, %s!dfgdfgdhdfhdhdhdhdg", "World");
     astring_dump(&tmp);
     astring_dump(&tmp1);
 
     println("string: %s", tmp.ptr);
-    println("context: %lld", (char*)core_context.temp_arena.current_alloc - (char*)core_context.temp_arena.buffer);
+    println("context: %zu", (size_t)core_context.temp_arena.current_alloc - (size_t)core_context.temp_arena.buffer);
 
     String tmp2 = string_format("Hello, dfgdfgdhdfhdhdWogfdg");
     string_dump(&tmp2);
+    string_destroy(&tmp2);
 
     core_defer(start(0), end(1)) {
         println("Middle");
-    }*/
+    }
 
-    /*core_defer_var(FileHandle, file, file_open("test.txt", FILE_READ), file_close(file), {
+    core_defer_var(FileHandle, file, file_open("test.txt", FILE_READ), file_close(file), {
         core_defer_var(String, content, file_read(file), string_destroy(&content), {
             println("content = %s", string_cstr(&content));
             string_dump(&content);
         });
-    });*/
+    });
 
     /*FileHandle file = file_open("test.txt", FILE_READ);
     String content = file_read(file);
