@@ -31,8 +31,6 @@ extern "C" {
 #define CORE_ASSERT(e)
 #endif
 
-#define CORE_UNUSED(var) (void)(var)
-
 typedef double              f64;
 typedef float               f32;
 typedef long long int       i64;
@@ -1168,7 +1166,7 @@ AString astring_from(ArenaAllocator *arena, const char *ptr) {
     CORE_ASSERT(ptr && "error: cannot pass nullptr to `astring_from`");
     size_t size = strlen(ptr);
     AString self = astring_new_size(arena, size);
-    strcpy_s(self.ptr, size + 1, ptr);
+    strcpy(self.ptr, ptr);
     self.len = size;
     return self;
 }
@@ -1180,7 +1178,7 @@ AString astring_from_parts(ArenaAllocator *arena, const char *ptr, size_t len, s
         .len = len,
         .cap = cap
     };
-    strcpy_s(self.ptr, self.cap, ptr);
+    strcpy(self.ptr, ptr);
     return self;
 }
 
@@ -1376,6 +1374,9 @@ i32 print(const char *fmt, ...) {
     va_start(args, fmt);
     i32 ret = vfprintf(stdout, fmt, args);
     va_end(args);
+#ifdef CORE_FLUSH_IO
+    fflush(stdout);
+#endif
     return ret;
 }
 
@@ -1385,6 +1386,9 @@ i32 println(const char *fmt, ...) {
     i32 ret = vfprintf(stdout, fmt, args);
     va_end(args);
     printf("\n");
+#ifdef CORE_FLUSH_IO
+    fflush(stdout);
+#endif
     return ret;
 }
 
@@ -1432,6 +1436,9 @@ void core_log(LogLevel level, const char *fmt, ...)
     vfprintf(stderr, fmt, args);
     va_end(args);
     fprintf(stderr, "\n");
+#ifdef CORE_FLUSH_IO
+    fflush(stdout);
+#endif
 }
 
 void __core_log_file(LogLevel level, const char *file, const char *fmt, ...)
@@ -1461,6 +1468,9 @@ void __core_log_file(LogLevel level, const char *file, const char *fmt, ...)
     vfprintf(stderr, fmt, args);
     va_end(args);
     fprintf(stderr, "\n");
+#ifdef CORE_FLUSH_IO
+    fflush(stdout);
+#endif
 }
 
 //  ----------------------------------- //

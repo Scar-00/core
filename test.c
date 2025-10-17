@@ -1,6 +1,9 @@
 #define CORE_IMPLEMENTATION
 #define CORE_DEBUG_ASSERT
+#define CORE_FLUSH_IO
 #include "core.h"
+
+#include <unistd.h>
 
 /*int start(size_t i) {
     println("Start = %zu", i);
@@ -11,35 +14,38 @@ void end(size_t i) {
     println("End = %zu", i);
 }*/
 
-#include "gfx.h"
+//#include "gfx.h"
 
-void window_event_callback(WindowHandle window, WindowEvent event, void *user_data) {
+/*void window_event_callback(WindowHandle window, WindowEvent event, void *user_data) {
     CORE_UNUSED(window);
     CORE_UNUSED(user_data);
     if(event.kind != WINDOW_EVENT_MOUSE_MOVE) {
         window_event_print(&event);
     }
-}
+}*/
 
 static void test(void);
-static void window_test(void);
+//static void window_test(void);
 static void test_strings(void);
 
-int main(void) {
+int main(int argc, char **argv) {
     CORE_UNUSED(test);
     CORE_UNUSED(test_strings);
-    window_test();
+    for(int i = 0; i < argc; i++) {
+        println("%d = %s", i, argv[i]);
+        sleep(1);
+    }
     return 0;
 }
 
-static void window_test(void) {
+/*static void window_test(void) {
     WindowHandle window = window_create(.name = sv("Test"), .width = 400, .height = 400, .event_callback = window_event_callback);
     while(!window_should_close(window)) {
         window_wait_events();
         window_poll_events(window);
     }
     window_destroy(window);
-}
+}*/
 
 static void test(void) {
     /*ArenaAllocator arena = arena_new(64);

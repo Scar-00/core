@@ -213,7 +213,7 @@ void window_make_current(WindowHandle window);
 bool window_should_close(WindowHandle window);
 //void window_clear_flag(WindowHandle window, WindowStyle flag);
 //void window_set_flag(WindowHandle window, WindowStyle flag);
-bool window_poll_event(WindowHandle window);
+bool window_poll_events(WindowHandle window);
 bool window_wait_events(void);
 
 #ifdef PLATFORM_WIN32

@@ -2,11 +2,11 @@
 ---@alias BinaryType "Executable" | "DynLib" | "StaticLib"
 ---@alias ErrorFlag "Error" | "Pedantic" | "Extra" | "All" | "DeprecatedDeclarations"
 ---@alias OptimizationLevel "Debug" | "Release" | "O0" | "O1" | "O2" | "O3" | "OSize"
+---@alias Os "Windows" | "Linux" | "MacOs" | "UnixLike"
 
 ---@class Args
----@field errors ?ErrorFlag[]
----@field no_errors ?ErrorFlag[]
----@field libs ?string[]
+---@field warnings ?ErrorFlag[]
+---@field no_warnings ?ErrorFlag[]
 ---@field custom ?string[]
 
 ---@class JoinHandle
@@ -23,6 +23,8 @@
 ---@field output ?string
 ---@field src_dir ?string
 ---@field includes ?string[]
+---@field lib_paths ?string[]
+---@field libs ?string[]
 ---@field args ?Args
 ---@field excludes ?string[]
 
@@ -37,17 +39,25 @@
 ---@field default_opt_level fun(self: Build): OptimizationLevel
 ---@field wants_run fun(self: Build): boolean
 ---@field run async fun(self: Build, binary: string, args: string[]?): CmdOutput?
+---@field host_os fun(self: Build): Os
 
 ---@param build Build
 return function (build)
     ---@type ToolChain
-    local tool_chain = "Msvc";
+    local tool_chain = build:default_toolchain();
     local warnings = { "Error", "Pedantic", "All", "Extra" };
     local no_warnings = { "DeprecatedDeclarations" };
+    local custom = {};
+    local libs = {};
+
+    if tool_chain == "Clang" and build:host_os() == "Unix" then
+        custom = { "-fsanitize=memory" };
+    end
 
     if tool_chain == "Msvc" then
         warnings = {};
         no_warnings = {};
+        libs = { "-luser32" };
     end
 
     local test = build:add_binary({
@@ -58,10 +68,11 @@ return function (build)
         },
         output = "test",
         includes = {},
+        libs = libs,
         args = {
             warnings = warnings,
             no_warnings = no_warnings,
-            libs = { "-luser32" }
+            custom = custom
         }
     });
     local test_exe = test:build_and_install();
@@ -69,6 +80,6 @@ return function (build)
         error(test_exe);
     end
     if build:wants_run() then
-        build:run(test_exe);
+        build:run(test_exe, { "test", "foo", "bar" });
     end
 end
