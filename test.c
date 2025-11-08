@@ -1,9 +1,9 @@
 #define CORE_IMPLEMENTATION
 #define CORE_DEBUG_ASSERT
-#define CORE_FLUSH_IO
+#define CORE_MEM_DEBUG
+//#define CORE_FLUSH_IO
 #include "core.h"
-
-#include <unistd.h>
+#include <aimline.h>
 
 int start(size_t i) {
     println("Start = %zu", i);
@@ -32,6 +32,14 @@ int main(void) {
     CORE_UNUSED(test);
     CORE_UNUSED(test_strings);
     test();
+    //test_strings();
+    ringbuffer_print_stats(&core_context.ring_buffer);
+    arena_print_stats(&core_context.temp_arena);
+#ifdef CORE_MEM_DEBUG
+    vec_foreach(core_context.memory_stats.allocations, alloc) {
+        println("%s:%zu: addr = %p, size = %zu", alloc->file.data, alloc->line, alloc->addr, alloc->size);
+    }
+#endif
     return 0;
 }
 
@@ -44,60 +52,44 @@ int main(void) {
     window_destroy(window);
 }*/
 
+/*static bool find(int *item, int *pred) {
+    return *item == *pred;
+}*/
+
 static void test(void) {
-    /*ArenaAllocator arena = arena_new(64);
-    Vec(uint32_t) vec = vec_new();
-    for(size_t i = 0; i < 100; i++) {
+    Arena arena = arena_new(64);
+    Vec(uint32_t) vec = vec_new(.allocator = arena_allocator(&arena));
+    for(size_t i = 0; i < 10; i++) {
         vec_push(vec, i);
     }
+
+    vec_remove(vec, 4);
 
     vec_foreach(vec, item) {
         println("%d", *item);
     }
+    vec_dump(vec);
 
-    vec_dump(vec);*/
-    /*Slice(uint32_t) test = slice_from_vec(vec);
-    println("ptr = %p, len = %zu", test.data, test.len);
+    arena_print_stats(&arena);
 
-    Vec(uint32_t) copy = slice_to_vec(test);
-    vec_dump(copy);
+    /*int pred = 10;
+    size_t index = vec_find(vec, pred, (EqCallback)find);
+    println("index = %zu", index);
+    println("%d", vec[index]);*/
 
-    avec_foreach(copy, item) {
-        println("%d", *item);
-    }
-
-    Slice(uint32_t) foo = test;
-    bar(foo);*/
-
-    AString tmp = tmp_printf("Hello, %s!dfgdfgdhdfhdhdhdhdg", "World");
-    AString tmp1 = tmp_printf("Hello, %s!dfgdfgdhdfhdhdhdhdg", "World");
-    astring_dump(&tmp);
-    astring_dump(&tmp1);
-
-    println("string: %s", tmp.ptr);
-    println("context: %zu", (size_t)core_context.temp_arena.current_alloc - (size_t)core_context.temp_arena.buffer);
-
-    String tmp2 = string_format("Hello, dfgdfgdhdfhdhdWogfdg");
-    string_dump(&tmp2);
-    string_destroy(&tmp2);
-
-    core_defer(start(0), end(1)) {
-        println("Middle");
-    }
-
-    core_defer_var(FileHandle, file, file_open("test.txt", FILE_READ), file_close(file), {
-        core_defer_var(String, content, file_read(file), string_destroy(&content), {
+    /*auto alloc = arena_allocator(&core_context.temp_arena);
+    core_defer_var(file, file_open("test.txt", FILE_READ, .allocator = alloc), file_close(file), {
+        core_defer_var(content, file_read(file), string_destroy(&content), {
             println("content = %s", string_cstr(&content));
             string_dump(&content);
         });
-    });
+    });*/
 
-    /*FileHandle file = file_open("test.txt", FILE_READ);
-    String content = file_read(file);
-    println("content = %s", string_cstr(&content));
-    string_dump(&content);
-    string_destroy(&content);
-    file_close(file);*/
+    //auto allocator = ringbuffer_allocator(&core_context.ring_buffer);
+    /*for(size_t i = 0; i < 15; i++) {
+        u32 *vec = vec_with_size(u32, 64);
+        CORE_UNUSED(vec);
+    }*/
 }
 
 static void test_strings(void) {
@@ -140,5 +132,13 @@ static void test_strings(void) {
         String s = string_format("fsdgkdflnfsodn%s", "fsidbfskdifbsdif");
         assert(string_len(&s) == 30 && string_cap(&s) > 30);
         println("s = %s", string_cstr(&s));
+    }
+    {
+        String str = tmp_printf("Hello, %s", "Worldfgdmfgindlgkndo");
+        println("s = %s", string_cstr(&str));
+    }
+    {
+        String str = string_from("Hello, gdfgdorldfgdmfgindlgkndo", .allocator = arena_allocator(&core_context.temp_arena));
+        println("s = %s", string_cstr(&str));
     }
 }

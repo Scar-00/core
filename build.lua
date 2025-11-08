@@ -8,7 +8,7 @@ return function (build)
     local libs = {};
 
     if tool_chain == "Clang" and build:host_os() == "Linux" then
-        custom = { "-fsanitize=memory" };
+        custom = { "-fsanitize=memory", "-ggdb", "-std=c23" };
     end
 
     if tool_chain == "Msvc" then
@@ -20,12 +20,15 @@ return function (build)
     local test = build:add_binary({
         tool_chain = tool_chain,
         opt_level = build:default_opt_level(),
-        files = { "test.c" },
+        files = { "./test.c" },
         output = "test",
-        includes = {},
+        includes = { "../work/aimline/" },
         libs = libs,
         args = { warnings = warnings, no_warnings = no_warnings, custom = custom }
     });
+    if build:should_generate_database() then
+        build:generate_database();
+    end
     local test_exe = test:build_and_install();
     if not test_exe then
         error(test_exe);
