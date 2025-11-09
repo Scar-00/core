@@ -18,6 +18,7 @@ return function (build)
     end
 
     local test = build:add_binary({
+        name = "test",
         tool_chain = tool_chain,
         opt_level = build:default_opt_level(),
         files = { "./test.c" },
@@ -31,7 +32,7 @@ return function (build)
     end
     local test_exe = test:build_and_install();
     if not test_exe then
-        error(test_exe);
+        error("failed to build `test`");
     end
     if build:wants_run() then
         build:run(test_exe, { "test", "foo", "bar" });

@@ -368,6 +368,26 @@ Allocator arena_allocator(Arena *self);
 void arena_print_stats(Arena *self);
 
 //  ----------------------------------- //
+//              static-arena            //
+//  ----------------------------------- //
+typedef struct StaticArena {
+    void *buffer;
+    void *current_alloc;
+    size_t size;
+}StaticArena;
+
+StaticArena static_arena_new_impl(size_t size, char buffer[size]);
+#define static_arena_new(buffer) static_arena_new_impl(CORE_ARRLEN(buffer), buffer)
+
+void *static_arena_alloc(StaticArena *alloc, size_t size);
+void *static_arena_realloc(StaticArena *alloc, void *src, size_t size);
+void static_arena_clear(StaticArena *alloc);
+
+Allocator static_arena_allocator(StaticArena *self);
+
+void static_arena_print_stats(StaticArena *self);
+
+//  ----------------------------------- //
 //                 print                //
 //  ----------------------------------- //
 i32 print(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
@@ -1308,6 +1328,56 @@ void arena_print_stats(Arena *self) {
         self->current_alloc,
         (ptr_t)self->current_alloc - (ptr_t)self->buffer,
         (void*)self->next
+    );
+}
+
+//  ----------------------------------- //
+//            static-arena-impl         //
+//  ----------------------------------- //
+StaticArena static_arena_new_impl(size_t size, char buffer[size]) {
+    return (StaticArena) {
+        .buffer = buffer,
+        .current_alloc = buffer,
+        .size = size,
+    };
+}
+
+void *static_arena_alloc(StaticArena *self, size_t size) {
+    if(self->buffer == NULL || self->current_alloc == NULL) {
+        CORE_ASSERT(self->buffer == NULL || self->current_alloc == NULL && "static_arena_alloc() cannot alloc in ");
+        return NULL;
+    }
+
+    void *alloc = self->current_alloc;
+    self->current_alloc = (char*)self->current_alloc + size;
+    return alloc;
+}
+
+void *static_arena_realloc(StaticArena *self, void *src, size_t size) {
+    CORE_UNUSED(src);
+    //grow allocation, if its the last one done
+    return static_arena_alloc(self, size);
+}
+
+void static_arena_clear(StaticArena *self) {
+    self->current_alloc = self->buffer;
+}
+
+Allocator static_arena_allocator(StaticArena *self) {
+    return (Allocator) {
+        .self = self,
+        .alloc = (AllocFn)static_arena_alloc,
+        .realloc = (ReallocFn)static_arena_realloc,
+        .free = _core_noop_free,
+    };
+}
+
+void static_arena_print_stats(StaticArena *self) {
+    println("StaticArena { buffer: %p, curent: %p, size: 0x%zx, buf-size: %zu }",
+        self->buffer,
+        self->current_alloc,
+        (ptr_t)self->current_alloc - (ptr_t)self->buffer,
+        self->size
     );
 }
 
