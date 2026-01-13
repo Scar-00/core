@@ -53,6 +53,10 @@ typedef uintptr_t           ptr_t;
 #define CORE_TODO(message) do { fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, message); abort(); } while(0)
 #define CORE_UNREACHABLE(message) do { fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message); abort(); } while(0)
 
+#define KB 1024
+#define CORE_KB(x) ((x) * KB)
+#define CORE_MB(x) (CORE_KB(x) * 1000)
+
 #define CORE_BIT(x) 1 << (x)
 #define FLAG_SET(v, flag) ((v) |= (flag))
 #define FLAG_CLEAR(v, flag) ((v) &= ~(flag))
@@ -71,9 +75,9 @@ typedef uintptr_t           ptr_t;
     { type var; for(size_t CORE_MACRO_VAR(i) = (var = begin, 0); !CORE_MACRO_VAR(i); (CORE_MACRO_VAR(i)++), end) body }
 #endif
 #define SHORT_STRING_LENGTH 24
-#define ARENA_DEFAULT_ALLOC_SIZE 1024 * 4
+#define ARENA_DEFAULT_ALLOC_SIZE CORE_KB(4)
 #ifndef RINGBUFFER_SIZE
-#define RINGBUFFER_SIZE 1024 * 4
+#define RINGBUFFER_SIZE CORE_KB(4)
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -1324,8 +1328,8 @@ Allocator arena_allocator(Arena *self) {
 
 void arena_print_stats(Arena *self) {
     println("Arena { buffer: %p, curent: %p, size: 0x%zx, next: %p }",
-        self->buffer,
-        self->current_alloc,
+        (void*)self->buffer,
+        (void*)self->current_alloc,
         (ptr_t)self->current_alloc - (ptr_t)self->buffer,
         (void*)self->next
     );
