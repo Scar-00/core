@@ -5,8 +5,6 @@
 extern "C" {
 #endif
 
-//#define CORE_MEM_DEBUG
-
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -16,6 +14,7 @@ extern "C" {
 #include <stdarg.h>
 #include <assert.h>
 #include <threads.h>
+#include <ctype.h>
 
 #ifdef  _WIN32
     #define  PLATFORM_WIN32
@@ -99,6 +98,7 @@ typedef wchar_t wchar;
 //  ----------------------------------- //
 //  the caller needs to garuentee that both pointers are valid and cannot go oob
 bool partial_cmp_ptr(const char *self, const char *predicate, size_t len);
+bool partial_cmp_ptr_rev(const char *self, const char *predicate, size_t len);
 typedef void *(*AllocFn)(void *self, size_t size);
 typedef void *(*ReallocFn)(void *self, void *mem, size_t size);
 typedef void (*FreeFn)(void *self, void *_block);
@@ -129,6 +129,7 @@ void *allocate_in_impl(void *item, size_t item_size, OptAllocArg arg);
 //  ----------------------------------- //
 //                string                //
 //  ----------------------------------- //
+struct String;
 typedef struct StringView {
     size_t len;
     const char *data;
@@ -141,6 +142,10 @@ StringView string_view_copy(StringView self);
 
 
 bool string_view_contains(StringView self, StringView predicate);
+bool string_view_cmp(StringView self, StringView other);
+bool string_view_cmp_str(StringView self, struct String const *other);
+bool string_view_starts_with(StringView self, StringView predicate);
+bool string_view_ends_with(StringView self, StringView predicate);
 
 #define sv string_view_new_const
 #define sv_from string_view_from
@@ -471,6 +476,69 @@ Bitmap bitmap_from_impl(const char *data, size_t width, size_t height, size_t st
 const void *bitmap_at(Bitmap *self, size_t x, size_t y);
 void bitmap_put(Bitmap *self, size_t x, size_t y, void *data);
 
+//  ----------------------------------- //
+//                json                  //
+//  ----------------------------------- //
+
+typedef u32 JsonValueKind;
+enum {
+    JSON_VALUE_TRUE,
+    JSON_VALUE_FALSE,
+    JSON_VALUE_NULL,
+    JSON_VALUE_STRING,
+    JSON_VALUE_NUMBER,
+    JSON_VALUE_OBJECT,
+    JSON_VALUE_ARRAY,
+};
+
+struct JsonObject;
+typedef struct JsonValue {
+    JsonValueKind kind;
+    union {
+        String string;
+        double number;
+        Vec(struct JsonValue) array;
+        struct JsonObject *obj;
+    };
+}JsonValue;
+
+typedef struct JsonObject {
+    Vec(struct JsonObjectEntry_ { String key; JsonValue value; }) fields;
+}JsonObject;
+
+typedef struct JSON {
+    Allocator alloc;
+    JsonObject root;
+}JSON;
+
+typedef struct OptJsonToStringArg {
+    Allocator allocator;
+    size_t pretty_print;
+}OptJsonToStringArg;
+
+JSON json_parse_impl(StringView str, OptAllocArg arg);
+#define json_parse(str, ...) json_parse_impl((str), (OptAllocArg){__VA_ARGS__})
+String json_to_string_impl(const JSON *json, OptJsonToStringArg arg);
+#define json_to_string(json, ...) json_to_string_impl((json), (OptJsonToStringArg){__VA_ARGS__})
+
+bool json_is_obj(JsonValue *self);
+bool json_is_array(JsonValue *self);
+bool json_is_string(JsonValue *self);
+bool json_is_number(JsonValue *self);
+bool json_is_null(JsonValue *self);
+bool json_is_bool(JsonValue *self);
+
+JsonObject *json_as_obj(JsonValue *self);
+Vec(JsonValue) *json_as_array(JsonValue *self);
+String *json_as_string(JsonValue *self);
+double *json_as_number(JsonValue *self);
+/*
+JsonValue json_obj_begin(JSON *self);
+JsonValue json_obj_key(JSON *self, StringView key);
+JsonValue json_obj_value(JSON *self, JsonValue value);
+JsonValue json_obj_end(JSON *self);
+JsonValue json_string(JSON *self);
+*/
 #ifdef CORE_IMPLEMENTATION
 #define ALLOC_ARG_OR_DEF(arg) (arg.allocator.alloc ? (CORE_ASSERT(arg.allocator.alloc&&arg.allocator.realloc&&arg.allocator.free), arg.allocator) : default_allocator)
 //  ----------------------------------- //
@@ -509,9 +577,46 @@ bool string_view_contains(StringView self, StringView predicate) {
     return false;
 }
 
+bool string_view_cmp(StringView self, StringView other) {
+    if(self.len != other.len) {
+        return false;
+    }
+    return partial_cmp_ptr(self.data, other.data, self.len);
+}
+
+bool string_view_cmp_str(StringView self, String const *other) {
+    if(self.len != string_len(other)) {
+        return false;
+    }
+    return partial_cmp_ptr(self.data, string_cstr(other), self.len);
+}
+
+bool string_view_starts_with(StringView self, StringView predicate) {
+    if(self.len > predicate.len) {
+        return false;
+    }
+    return partial_cmp_ptr(self.data, predicate.data, predicate.len);
+}
+
+bool string_view_ends_with(StringView self, StringView predicate) {
+    if(self.len > predicate.len) {
+        return false;
+    }
+    return partial_cmp_ptr_rev(self.data, predicate.data, predicate.len);
+}
+
 //  the caller needs to garuentee that both pointers are valid and cannot go oob
 bool partial_cmp_ptr(const char *self, const char *predicate, size_t len) {
-    for(size_t i = 0; i < len; i ++) {
+    for(size_t i = 0; i < len; i++) {
+        if(self[i] != predicate[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool partial_cmp_ptr_rev(const char *self, const char *predicate, size_t len) {
+    for(size_t i = len; i > 0; i--) {
         if(self[i] != predicate[i]) {
             return false;
         }
@@ -1562,6 +1667,300 @@ void bitmap_put(Bitmap *self, size_t x, size_t y, void *data) {
         self->data[(x * i) * self->width + (y * i)] = ((char*)data)[i];
     }
 }*/
+
+//  ----------------------------------- //
+//               json-impl              //
+//  ----------------------------------- //
+
+typedef struct JsonParser {
+    StringView src;
+    char curr;
+    size_t index;
+}JsonParser;
+
+static bool json_parser_advance(JsonParser *self) {
+    if(self->index >= self->src.len) {
+        return false;
+    }
+    while(self->index < self->src.len && isspace(self->src.data[self->index + 1])) {
+        self->index++;
+    }
+    self->curr = self->src.data[++self->index];
+    return true;
+}
+
+static char json_parser_peek(JsonParser *self) {
+    if(self->index > self->src.len) {
+        return 0;
+    }
+    return self->src.data[self->index + 1];
+}
+
+static bool json_parser_expect(JsonParser *self, char next) {
+    if(self->curr != next) {
+        return false;
+    }
+    return json_parser_advance(self);
+}
+
+static bool json_parse_value(JsonParser *parser, JsonValue *out, Allocator alloc);
+
+static bool json_parse_key(JsonParser *parser, String *out) {
+    if(!json_parser_expect(parser, '\"')) return false;
+    while(parser->curr != '\"') {
+        string_push(out, parser->src.data[parser->index]);
+        if(!json_parser_advance(parser)) return false;
+    }
+    return json_parser_expect(parser, '\"');
+}
+
+static bool json_parse_obj(JsonParser *parser, JsonValue *out, Allocator alloc) {
+    if(!json_parser_expect(parser, '{')) return false;
+    JsonObject obj = {
+        .fields = vec_new(.allocator = alloc),
+    };
+    while(parser->curr != '}') {
+        String key = string_new(.allocator = alloc);
+        JsonValue value = {0};
+        if(!json_parse_key(parser, &key)) return false;
+        if(!json_parser_expect(parser, ':')) return false;
+        if(!json_parse_value(parser, &value, alloc)) return false;
+        struct JsonObjectEntry_ entry = { .key = key, .value = value };
+        vec_push(obj.fields, entry);
+        if(parser->curr == '}') {
+            break;
+        }
+        if(!json_parser_expect(parser, ',')) {
+            char next = json_parser_peek(parser);
+            if(next && next != '}') {
+                return false;
+            }
+        }
+    }
+    if(!json_parser_expect(parser, '}')) return false;
+    out->kind = JSON_VALUE_OBJECT;
+    out->obj = to_heap(obj);
+    return true;
+}
+
+static bool json_parse_array(JsonParser *parser, JsonValue *out, Allocator alloc) {
+    if(!json_parser_expect(parser, '[')) return false;
+    Vec(JsonValue) arr = vec_new(.allocator = alloc);
+    while(parser->curr != ']') {
+        JsonValue value = {0};
+        if(!json_parse_value(parser, &value, alloc)) return false;
+        vec_push(arr, value);
+        if(parser->curr == ']') {
+            break;
+        }
+        if(!json_parser_expect(parser, ',')) {
+            char next = json_parser_peek(parser);
+            if(next && next != ']') {
+                return false;
+            }
+        }
+    }
+    if(!json_parser_expect(parser, ']')) return false;
+    out->kind = JSON_VALUE_ARRAY;
+    out->array = arr;
+    return true;
+}
+
+static bool json_parse_str(JsonParser *parser, JsonValue *out, Allocator alloc) {
+    String value = string_new(.allocator = alloc);
+    if(!json_parse_key(parser, &value)) return false;
+    out->kind = JSON_VALUE_STRING;
+    out->string = value;
+    return true;
+}
+
+static bool json_parse_number(JsonParser *parser, JsonValue *out, Allocator alloc) {
+    String value = string_new(.allocator = alloc);
+    while(isdigit(parser->curr) || parser->curr == '.') {
+        string_push(&value, parser->curr);
+        if(!json_parser_advance(parser)) return false;
+    }
+    double res = strtod(string_cstr(&value), NULL);
+    out->kind = JSON_VALUE_NUMBER;
+    out->number = res;
+    return true;
+}
+
+static bool json_parse_ident(JsonParser *parser, JsonValue *out, Allocator alloc) {
+    String value = string_new(.allocator = alloc);
+    while(isalpha(parser->curr)) {
+        string_push(&value, parser->curr);
+        if(!json_parser_advance(parser)) return false;
+    }
+    if(string_cmp_sv(&value, sv("null"))) {
+        out->kind = JSON_VALUE_NULL;
+        return true;
+    }else if(string_cmp_sv(&value, sv("true"))) {
+        out->kind = JSON_VALUE_TRUE;
+        return true;
+    }else if(string_cmp_sv(&value, sv("false"))) {
+        out->kind = JSON_VALUE_FALSE;
+        return true;
+    }else {
+        return false;
+    }
+}
+
+static bool json_parse_value(JsonParser *parser, JsonValue *out, Allocator alloc) {
+    switch(parser->curr) {
+    case '\"': {
+        return json_parse_str(parser, out, alloc);
+    }break;
+    case '{': {
+        return json_parse_obj(parser, out, alloc);
+    }break;
+    case '[': {
+        return json_parse_array(parser, out, alloc);
+    }break;
+    default: {
+        if(isdigit(parser->curr)) {
+            return json_parse_number(parser, out, alloc);
+        }
+        if(isalpha(parser->curr)) {
+            return json_parse_ident(parser, out, alloc);
+        }
+        return false;
+    }break;
+    }
+}
+
+JSON json_parse_impl(StringView str, OptAllocArg arg) {
+    Allocator alloc = ALLOC_ARG_OR_DEF(arg);
+    JsonParser parser = {
+        .src = str,
+        .curr = str.data[0],
+        .index = 0,
+    };
+    JsonValue root;
+    if(!json_parse_obj(&parser, &root, alloc)) {
+        CORE_ASSERT(false && "failed to parse json");
+    }
+    CORE_ASSERT(root.kind == JSON_VALUE_OBJECT && "json root is not an object");
+    JSON json = {
+        .alloc = alloc,
+        .root = *root.obj,
+    };
+    allocator_free(&alloc, root.obj);
+    return json;
+}
+
+static void json_value_append(JsonValue *value, String *str, i32 depth, i32 tab_width) {
+    switch (value->kind) {
+    case JSON_VALUE_OBJECT: {
+        string_pushf(str, "{");
+        if(tab_width) {
+            string_push(str, '\n');
+        }
+        vec_iter(value->obj->fields, i) {
+            struct JsonObjectEntry_ *field = &value->obj->fields[i];
+            string_pushf(str, "%*s\"%.*s\": ", (depth + 1) * tab_width, "", (i32)string_len(&field->key), string_cstr(&field->key));
+            json_value_append(&field->value, str, depth + 1, tab_width);
+            if(i != vec_len(value->obj->fields) - 1) {
+                string_push(str, ',');
+                if(tab_width) {
+                    string_push(str, '\n');
+                }
+            }
+        }
+        if(tab_width) {
+            string_push(str, '\n');
+        }
+        string_pushf(str, "%*s}", depth * tab_width, "");
+    }break;
+    case JSON_VALUE_ARRAY: {
+        string_pushf(str, "[");
+        if(tab_width) {
+            string_push(str, '\n');
+        }
+        vec_iter(value->array, i) {
+            string_pushf(str, "%*s", (depth + 1) * tab_width, "");
+            json_value_append(&value->array[i], str, depth + 1, tab_width);
+            if(i != vec_len(value->array) - 1) {
+                string_push(str, ',');
+                if(tab_width) {
+                    string_push(str, '\n');
+                }
+            }
+        }
+        if(tab_width) {
+            string_push(str, '\n');
+        }
+        string_pushf(str, "%*s]", depth * tab_width, "");
+    }break;
+    case JSON_VALUE_STRING: {
+        string_pushf(str, "\"%.*s\"", (int)string_len(&value->string), string_cstr(&value->string));
+    }break;
+    case JSON_VALUE_NUMBER: {
+        string_pushf(str, "%g", value->number);
+    }break;
+    case JSON_VALUE_NULL: {
+        string_push_ptr(str, "null");
+    }break;
+    case JSON_VALUE_TRUE: {
+        string_push_ptr(str, "true");
+    }break;
+    case JSON_VALUE_FALSE: {
+        string_push_ptr(str, "false");
+    }break;
+    }
+}
+
+String json_to_string_impl(const JSON *json, OptJsonToStringArg arg) {
+    Allocator alloc = ALLOC_ARG_OR_DEF(arg);
+    String str = string_new(.allocator = alloc);
+    JsonValue value = { .kind = JSON_VALUE_OBJECT, .obj = (JsonObject*)&json->root };
+    json_value_append(&value, &str, 0, arg.pretty_print);
+    return str;
+}
+
+bool json_is_obj(JsonValue *self) {
+    return self->kind == JSON_VALUE_OBJECT;
+}
+
+bool json_is_array(JsonValue *self) {
+    return self->kind == JSON_VALUE_ARRAY;
+}
+
+bool json_is_string(JsonValue *self) {
+    return self->kind == JSON_VALUE_STRING;
+}
+
+bool json_is_number(JsonValue *self) {
+    return self->kind == JSON_VALUE_NUMBER;
+}
+
+bool json_is_null(JsonValue *self) {
+    return self->kind == JSON_VALUE_NUMBER;
+}
+
+bool json_is_bool(JsonValue *self) {
+    return self->kind == JSON_VALUE_TRUE || self->kind == JSON_VALUE_FALSE;
+}
+
+JsonObject *json_as_obj(JsonValue *self) {
+    if(!json_is_obj(self)) return NULL;
+    return self->obj;
+}
+
+Vec(JsonValue) *json_as_array(JsonValue *self) {
+    if(!json_is_array(self)) return NULL;
+    return &self->array;
+}
+
+String *json_as_string(JsonValue *self) {
+    if(!json_is_string(self)) return NULL;
+    return &self->string;
+}
+
+double *json_as_number(JsonValue *self) {
+    if(!json_is_number(self)) return NULL;
+    return &self->number;
+}
 
 #endif //CORE_IMPLEMENTATION
 #ifdef __cplusplus
