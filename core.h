@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+#define CORE_IMPLEMENTATION
+
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -239,6 +241,7 @@ typedef struct RingBuffer {
 
 RingBuffer ringbuffer_init_impl(OptAllocArg args);
 #define ringbuffer_init(...) ringbuffer_init_impl((OptAllocArg){__VA_ARGS__})
+void ringbuffer_deinit(RingBuffer *self);
 #define scratch_init ringbuffer_init
 void *ringbuffer_alloc(RingBuffer *self, size_t size);
 #define scratch_alloc ringbuffer_alloc
@@ -441,6 +444,8 @@ typedef struct Allocation {
     struct { StringView file; size_t line; } freed_at;
 }Allocation;
 
+void allocation_print(Allocation *self);
+
 typedef struct MemoryStats {
     Vec(Allocation) allocations;
 }MemoryStats;
@@ -520,6 +525,7 @@ JSON json_parse_impl(StringView str, OptAllocArg arg);
 #define json_parse(str, ...) json_parse_impl((str), (OptAllocArg){__VA_ARGS__})
 String json_to_string_impl(const JSON *json, OptJsonToStringArg arg);
 #define json_to_string(json, ...) json_to_string_impl((json), (OptJsonToStringArg){__VA_ARGS__})
+void json_free(JSON json);
 
 bool json_is_obj(JsonValue *self);
 bool json_is_array(JsonValue *self);
@@ -936,9 +942,14 @@ Allocator std_alloc = {
     .free = _std_free,
 };
 
-/*static bool _core_allocation_find(Allocation *elem, Allocation *pred) {
-    return elem->addr == pred->addr;
-}*/
+static Allocation *_core_allocation_find(void *addr) {
+    vec_foreach(core_context.memory_stats.allocations, alloc) {
+        if(alloc->addr == addr) {
+            return alloc;
+        }
+    }
+    return NULL;
+}
 
 void *allocator_alloc_debug(Allocator *self, size_t size, size_t line, const char *file) {
     if(self->self == CORE_DEBUG_ALLOCATOR_MARKER) {
@@ -954,23 +965,32 @@ void *allocator_alloc_debug(Allocator *self, size_t size, size_t line, const cha
 }
 
 void *allocator_realloc_debug(Allocator *self, void *mem, size_t size, size_t line, const char *file) {
-    CORE_UNUSED(line);
-    CORE_UNUSED(file);
     if(self->self == CORE_DEBUG_ALLOCATOR_MARKER) {
         if(!core_context.memory_stats.allocations) {
             core_context.memory_stats.allocations = vec_new(.allocator = std_alloc);
         }
-        return self->realloc(self->self, mem, size);
+        Allocation *alloc = _core_allocation_find(mem);
+        void *new = self->realloc(self->self, mem, size);
+        if(alloc) {
+            alloc->addr = new;
+            alloc->size = size;
+            alloc->file = sv_from(file);
+            alloc->line = line;
+        }
+        return new;
     }
     return self->realloc(self->self, mem, size);
 }
 
 void allocator_free_debug(Allocator *self, void *_block, size_t line, const char *file) {
-    CORE_UNUSED(line);
-    CORE_UNUSED(file);
     if(self->self == CORE_DEBUG_ALLOCATOR_MARKER) {
         if(!core_context.memory_stats.allocations) {
             core_context.memory_stats.allocations = vec_new(.allocator = std_alloc);
+        }
+        Allocation *alloc = _core_allocation_find(_block);
+        if(alloc) {
+            alloc->freed_at.file = sv_from(file);
+            alloc->freed_at.line = line;
         }
     }
     self->free(self->self, _block);
@@ -1042,6 +1062,10 @@ RingBuffer ringbuffer_init_impl(OptAllocArg args) {
         .write_pos = 0,
         .alloc = alloc,
     };
+}
+
+void ringbuffer_deinit(RingBuffer *self) {
+    allocator_free(&self->alloc, self->base);
 }
 
 void *ringbuffer_alloc(RingBuffer *self, size_t size) {
@@ -1610,6 +1634,23 @@ const char *const *flag_str(const char *lo, char sh, const char *const *def) {
 //  ----------------------------------- //
 //             context-impl             //
 //  ----------------------------------- //
+
+#ifdef CORE_MEM_DEBUG
+
+void allocation_print(Allocation *self) {
+    println(
+        "%s:%zu: %p[%zu]; freed at: %s:%zu",
+        self->file.data,
+        self->line,
+        self->addr,
+        self->size,
+        self->freed_at.file.data,
+        self->freed_at.line
+    );
+}
+
+#endif
+
 thread_local Context core_context = {0};
 
 String tmp_printf(const char *fmt, ...) {
@@ -1632,6 +1673,33 @@ StringView tmp_copy_str(String *self) {
     char *new = ringbuffer_alloc(&core_context.ring_buffer, (len + 1) * sizeof(char));
     memcpy(new, string_cstr(self), len + 1);
     return string_view_new(new, len);
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+#   define CORE_CONSTRUCTOR __attribute__((constructor))
+#   define CORE_DESTRUCTOR __attribute__((destructor))
+#else
+#    #error you need to call `context_init` manually on msvc
+#endif
+
+static void _core_context_init(void) {
+    #ifdef CORE_MEM_DEBUG
+        core_context.memory_stats.allocations = vec_new(.allocator = std_alloc);
+    #endif
+}
+
+void context_deinit(void)  {
+    ringbuffer_deinit(&core_context.ring_buffer);
+#ifdef CORE_MEM_DEBUG
+    vec_foreach(core_context.memory_stats.allocations, alloc) {
+        allocation_print(alloc);
+    }
+#endif
+}
+
+CORE_CONSTRUCTOR void context_init(void)  {
+    _core_context_init();
+    atexit(context_deinit);
 }
 
 //  ----------------------------------- //
@@ -1739,7 +1807,7 @@ static bool json_parse_obj(JsonParser *parser, JsonValue *out, Allocator alloc) 
     }
     if(!json_parser_expect(parser, '}')) return false;
     out->kind = JSON_VALUE_OBJECT;
-    out->obj = to_heap(obj);
+    out->obj = allocate_in(obj, .allocator = alloc);
     return true;
 }
 
@@ -1916,6 +1984,38 @@ String json_to_string_impl(const JSON *json, OptJsonToStringArg arg) {
     JsonValue value = { .kind = JSON_VALUE_OBJECT, .obj = (JsonObject*)&json->root };
     json_value_append(&value, &str, 0, arg.pretty_print);
     return str;
+}
+
+static void json_free_value(JSON *self, JsonValue value);
+
+static void json_free_value(JSON *self, JsonValue value) {
+    switch (value.kind) {
+    case JSON_VALUE_ARRAY: {
+        vec_foreach(value.array, item) {
+            json_free_value(self, *item);
+        }
+        vec_destroy(value.array);
+    }break;
+    case JSON_VALUE_OBJECT: {
+        vec_foreach(value.obj->fields, field) {
+            string_destroy(&field->key);
+            json_free_value(self, field->value);
+        }
+        vec_destroy(value.obj->fields);
+        allocator_free(&self->alloc, value.obj);
+    }break;
+    case JSON_VALUE_STRING: {
+        string_destroy(&value.string);
+    }break;
+    }
+}
+
+void json_free(JSON self) {
+    vec_foreach(self.root.fields, field) {
+        string_destroy(&field->key);
+        json_free_value(&self, field->value);
+    }
+    vec_destroy(self.root.fields);
 }
 
 bool json_is_obj(JsonValue *self) {
