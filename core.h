@@ -1065,6 +1065,9 @@ RingBuffer ringbuffer_init_impl(OptAllocArg args) {
 }
 
 void ringbuffer_deinit(RingBuffer *self) {
+    if(!self->base) {
+        return;
+    }
     allocator_free(&self->alloc, self->base);
 }
 
@@ -1846,11 +1849,15 @@ static bool json_parse_number(JsonParser *parser, JsonValue *out, Allocator allo
     String value = string_new(.allocator = alloc);
     while(isdigit(parser->curr) || parser->curr == '.') {
         string_push(&value, parser->curr);
-        if(!json_parser_advance(parser)) return false;
+        if(!json_parser_advance(parser)) {
+            string_destroy(&value);
+            return false;
+        }
     }
     double res = strtod(string_cstr(&value), NULL);
     out->kind = JSON_VALUE_NUMBER;
     out->number = res;
+    string_destroy(&value);
     return true;
 }
 
@@ -1858,18 +1865,25 @@ static bool json_parse_ident(JsonParser *parser, JsonValue *out, Allocator alloc
     String value = string_new(.allocator = alloc);
     while(isalpha(parser->curr)) {
         string_push(&value, parser->curr);
-        if(!json_parser_advance(parser)) return false;
+        if(!json_parser_advance(parser)) {
+            string_destroy(&value);
+            return false;
+        }
     }
     if(string_cmp_sv(&value, sv("null"))) {
         out->kind = JSON_VALUE_NULL;
+        string_destroy(&value);
         return true;
     }else if(string_cmp_sv(&value, sv("true"))) {
         out->kind = JSON_VALUE_TRUE;
+        string_destroy(&value);
         return true;
     }else if(string_cmp_sv(&value, sv("false"))) {
         out->kind = JSON_VALUE_FALSE;
+        string_destroy(&value);
         return true;
     }else {
+        string_destroy(&value);
         return false;
     }
 }
