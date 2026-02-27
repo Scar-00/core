@@ -1,6 +1,7 @@
 #ifndef _CORE_H_
 #define _CORE_H_
 
+#include <corecrt_search.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,8 +19,8 @@ extern "C" {
 #include <threads.h>
 #include <ctype.h>
 
-#ifdef  _WIN32
-    #define  PLATFORM_WIN32
+#ifdef _WIN32
+    #define PLATFORM_WIN32
 #else
     #define PLATFORM_POSIX
 #endif
@@ -52,7 +53,11 @@ typedef uintptr_t           ptr_t;
 
 #define CORE_UNUSED(value) (void)(value)
 #define CORE_TODO(message) do { fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, message); abort(); } while(0)
-#define CORE_UNREACHABLE(message) do { fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message); abort(); } while(0)
+#if defined(__GNUC__) || defined(__clang__)
+#define CORE_UNREACHABLE(message) do { fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message); __builtin_unreachable(); } while(0)
+#else
+#define CORE_UNREACHABLE(message) do { fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message); __assume(false); } while(0)
+#endif
 
 #define KB 1024
 #define CORE_KB(x) ((x) * KB)
@@ -76,14 +81,14 @@ typedef uintptr_t           ptr_t;
     { type var; for(size_t CORE_MACRO_VAR(i) = (var = begin, 0); !CORE_MACRO_VAR(i); (CORE_MACRO_VAR(i)++), end) body }
 #endif
 #define SHORT_STRING_LENGTH 24
+#ifndef ARENA_DEFAULT_ALLOC_SIZE
 #define ARENA_DEFAULT_ALLOC_SIZE CORE_KB(4)
+#endif
 #ifndef RINGBUFFER_SIZE
 #define RINGBUFFER_SIZE CORE_KB(4)
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
-//stolen from //   TODO: implement NOB_PRINTF_FORMAT for MSVC
-//   https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Function-Attributes.html
 #    ifdef __MINGW_PRINTF_FORMAT
 #        define CORE_PRINTF_FORMAT(STRING_INDEX, FIRST_TO_CHECK) __attribute__ ((format (__MINGW_PRINTF_FORMAT, STRING_INDEX, FIRST_TO_CHECK)))
 #    else
@@ -125,8 +130,8 @@ void *allocate_in_impl(void *item, size_t item_size, OptAllocArg arg);
     (sizeof((item)))\
 )
 
-//allocate_in_impl(&(item), sizeof((item)), (OptAllocArg){__VA_ARGS__})
 #define to_heap(item) allocate_in((item), .allocator = default_allocator)
+#define cloned(item) to_heap((item))
 
 //  ----------------------------------- //
 //                string                //
@@ -141,7 +146,6 @@ StringView string_view_from(const char *data);
 StringView string_view_new(const char *data, size_t len);
 StringView string_view_copy(StringView self);
 #define string_view_new_const(s) ((StringView){ .len = sizeof((s)) - 1, .data = (s) })
-
 
 bool string_view_contains(StringView self, StringView predicate);
 bool string_view_cmp(StringView self, StringView other);
@@ -217,17 +221,21 @@ typedef struct String String;
 //  ----------------------------------- //
 //              allocator               //
 //  ----------------------------------- //
+
+typedef struct OptAllocatorArg { bool zeroed; } OptAllocatorArg;
+
 Allocator default_allocator;
 
 #ifdef CORE_MEM_DEBUG
-void *allocator_alloc_debug(Allocator *self, size_t size, size_t line, const char *file);
-#define allocator_alloc(self, size) allocator_alloc_debug((self), (size), __LINE__, __FILE__)
+void *allocator_alloc_debug(Allocator *self, size_t size, OptAllocatorArg arg, size_t line, const char *file);
+#define allocator_alloc(self, size, ...) allocator_alloc_debug((self), (size), (OptAllocatorArg){__VA_ARGS__}, __LINE__, __FILE__)
 void *allocator_realloc_debug(Allocator *self, void *mem, size_t size, size_t line, const char *file);
 #define allocator_realloc(self, mem, size) allocator_realloc_debug((self), (mem), (size), __LINE__, __FILE__)
 void allocator_free_debug(Allocator *self, void *_block, size_t line, const char *file);
 #define allocator_free(self, _block) allocator_free_debug((self), (_block), __LINE__, __FILE__)
 #else
-void *allocator_alloc(Allocator *self, size_t size);
+void *allocator_alloc_impl(Allocator *self, size_t size, OptAllocatorArg arg);
+#define allocator_alloc(self, size, ...) allocator_alloc_impl((self), (size), (OptAllocatorArg){__VA_ARGS__});
 void *allocator_realloc(Allocator *self, void *mem, size_t size);
 void allocator_free(Allocator *self, void *_block);
 #endif
@@ -269,7 +277,7 @@ typedef struct File {
     Allocator alloc;
 }File, *FileHandle;
 
-FileHandle file_open_impl(const char *path, FileMode_ mode, OptAllocArg arg);
+FileHandle file_open_impl(StringView path, FileMode_ mode, OptAllocArg arg);
 #define file_open(path, mode, ...) file_open_impl((path), (mode), (OptAllocArg){__VA_ARGS__})
 void file_close(FileHandle self);
 void *file_raw(FileHandle self);
@@ -281,10 +289,13 @@ bool file_write_raw(FileHandle self, const char *data, size_t len);
 bool file_write(FileHandle self, const StringView data);
 bool file_exists(const StringView path);
 
-String file_read_to_string_impl(const char *path, OptAllocArg arg);
-#define file_read_to_string(path, ...) file_read_to_string((path), (OptAllocArg){__VA_ARGS__})
-char *file_read_to_vec_impl(const char *path, OptAllocArg arg);
-#define file_read_to_vec(path, ...) file_read_to_vec((path), (OptAllocArg){__VA_ARGS__})
+String file_read_to_string_impl(StringView path, OptAllocArg arg);
+#define file_read_to_string(path, ...) file_read_to_string_impl((path), (OptAllocArg){__VA_ARGS__})
+char *file_read_to_vec_impl(StringView path, OptAllocArg arg);
+#define file_read_to_vec(path, ...) file_read_to_vec_impl((path), (OptAllocArg){__VA_ARGS__})
+bool file_write_string(StringView path, StringView data);
+bool file_write_vec(StringView path, char *data);
+bool file_write_slice(StringView path, char *data, size_t elems);
 
 FileHandle stdio_get(void);
 FileHandle stderr_get(void);
@@ -951,7 +962,8 @@ static Allocation *_core_allocation_find(void *addr) {
     return NULL;
 }
 
-void *allocator_alloc_debug(Allocator *self, size_t size, size_t line, const char *file) {
+void *allocator_alloc_debug(Allocator *self, size_t size, OptAllocatorArg arg, size_t line, const char *file) {
+    CORE_UNUSED(arg);
     if(self->self == CORE_DEBUG_ALLOCATOR_MARKER) {
         if(!core_context.memory_stats.allocations) {
             core_context.memory_stats.allocations = vec_new(.allocator = std_alloc);
@@ -996,7 +1008,13 @@ void allocator_free_debug(Allocator *self, void *_block, size_t line, const char
     self->free(self->self, _block);
 }
 #else
-void *allocator_alloc(Allocator *self, size_t size) {
+void *allocator_alloc_impl(Allocator *self, size_t size, OptAllocatorArg arg) {
+    if(arg.zeroed) {
+        void *data = self->alloc(self->self, size);
+        if(!data) return NULL;
+        memset(data, 0, size);
+        return data;
+    }
     return self->alloc(self->self, size);
 }
 void *allocator_realloc(Allocator *self, void *mem, size_t size) {
@@ -1135,17 +1153,18 @@ static String mode_to_string(FileMode_ mode) {
     return buffer;
 }
 
-FileHandle file_open_impl(const char *path, FileMode_ mode, OptAllocArg arg) {
+FileHandle file_open_impl(StringView path, FileMode_ mode, OptAllocArg arg) {
     Allocator alloc = ALLOC_ARG_OR_DEF(arg);
     String mode_str = mode_to_string(mode);
     const char *mode_cstr = string_cstr(&mode_str);
     CORE_ASSERT(mode_cstr && "invalid file mode");
     FileHandle self = allocator_alloc(&alloc, sizeof(File));
     if(!self) return NULL;
+    String str = sv_into_string(path, .allocator = alloc);
     *self = (File){
-        .path = string_from(path, .allocator = alloc),
+        .path = str,
         .mode = mode,
-        .fd = fopen(path, mode_cstr),
+        .fd = fopen(string_cstr(&str), mode_cstr),
         .alloc = alloc,
     };
     if(!self->fd) {
@@ -1212,11 +1231,11 @@ bool file_exists(const StringView path) {
 }
 
 
-String file_read_to_string_impl(const char *path, OptAllocArg arg) {
+String file_read_to_string_impl(StringView path, OptAllocArg arg) {
     FileHandle file = file_open(path, FILE_READ, .allocator = arg.allocator);
 #ifndef CORE_DEBUG
     if(!file) {
-        fprintf(stderr, "[INFO]: failed to open file `%s`", path);
+        fprintf(stderr, "[INFO]: failed to open file `%*s`", (int)path.len,  path.data);
     }
 #endif
     String content = file_read(file, .allocator = arg.allocator);
@@ -1224,16 +1243,37 @@ String file_read_to_string_impl(const char *path, OptAllocArg arg) {
     return content;
 }
 
-Vec(char) file_read_to_vec_impl(const char *path, OptAllocArg arg) {
+Vec(char) file_read_to_vec_impl(StringView path, OptAllocArg arg) {
     FileHandle file = file_open(path, FILE_READ | FILE_BIN, .allocator = arg.allocator);
 #ifndef CORE_DEBUG
     if(!file) {
-        fprintf(stderr, "[INFO]: failed to open file `%s`", path);
+        fprintf(stderr, "[INFO]: failed to open file `%*s`", (int)path.len,  path.data);
     }
 #endif
     Vec(char) content = file_read_binary(file, .allocator = arg.allocator);
     file_close(file);
     return content;
+}
+
+bool file_write_string(StringView path, StringView data) {
+    FileHandle fd = file_open(path, FILE_WRITE);
+    bool ret = file_write(fd, data);
+    file_close(fd);
+    return ret;
+}
+
+bool file_write_vec(StringView path, Vec(char) data) {
+    FileHandle fd = file_open(path, FILE_BIN | FILE_WRITE);
+    bool ret = file_write_raw(fd, data, vec_len(data));
+    file_close(fd);
+    return ret;
+}
+
+bool file_write_slice(StringView path, char *data, size_t elems) {
+    FileHandle fd = file_open(path, FILE_WRITE);
+    bool ret = file_write_raw(fd, data, elems);
+    file_close(fd);
+    return ret;
 }
 
 static bool std_file_handles_init = false;
@@ -1419,7 +1459,7 @@ static void arena_clear_int(Arena *self) {
 
 static void* arena_alloc_internal(Arena *self, size_t size) {
     if(self->buffer == NULL || self->current_alloc == NULL) {
-        *self = arena_new(0);
+        *self = arena_new(ARENA_DEFAULT_ALLOC_SIZE);
     }
 
     if(self->next) {
