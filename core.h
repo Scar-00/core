@@ -132,7 +132,6 @@ void *allocate_in_impl(void *item, size_t item_size, OptAllocArg arg);
 
 #define to_heap(item) allocate_in((item), .allocator = default_allocator)
 #define cloned(item) to_heap((item))
-
 //  ----------------------------------- //
 //                string                //
 //  ----------------------------------- //
@@ -217,6 +216,12 @@ String string_view_into_string_impl(StringView self, OptAllocArg arg);
 
 typedef struct StringView StringView;
 typedef struct String String;
+
+#define STRING_FMT "%*s"
+#define STRING_ARG(str) ((int)string_len((str))), string_cstr((str))
+
+#define SV_FMT "%*s"
+#define SV_ARG(sv) ((int)(sv).len), (sv).data
 
 //  ----------------------------------- //
 //              allocator               //
@@ -327,15 +332,15 @@ bool core_vec_remove(void *vec, size_t elem_size, size_t index);
 #define vec_len(v) (vec_header((v))->len)
 #define vec_cap(v) (vec_header((v))->cap)
 
-#define Vec(type) type *
+#define Vec(...) __VA_ARGS__*
 #define vec_new(...) core_vec_create_empty_internal((OptAllocArg){__VA_ARGS__})
 #define vec_new_with(items, ...) core_vec_create_from_parts_internal(items, CORE_ARRLEN(items), sizeof(items[0]), (OptAllocArg){__VA_ARGS__})
 #define vec_clear(v) (vec_header((v))->len = 0)
 #define vec_with_size(ty, size, ...) core_vec_create_internal((size), sizeof(ty), (OptAllocArg){__VA_ARGS__})
 #define vec_from_parts(ty, ptr, size, ...) core_vec_create_from_parts_internal((ptr), (size), sizeof(ty), (OptAllocArg){__VA_ARGS__})
 #define vec_destroy(arr) (core_vec_destroy_internal(vec_header(arr)), arr = NULL)
-#define vec_push(arr, value) ((arr) = core_vec_maygrow_internal((arr), sizeof(*(arr))), (arr)[vec_header((arr))->len++] = (value))
-#define vec_pop(arr) (vec_header((arr))->len--, (arr)[vec_len((arr))])
+#define vec_push(arr, ...) ((arr) = core_vec_maygrow_internal((arr), sizeof(*(arr))), (arr)[vec_header((arr))->len++] = (__VA_ARGS__))
+#define vec_pop(arr) (arr)[(CORE_ASSERT(vec_len((arr)) > 0), --vec_len((arr)))]
 #define vec_put(arr, index, value) do{\
     if(!arr) arr = core_vec_maygrow_internal((arr), (size_t)sizeof(*(arr)));\
     if((index) >= vec_len((arr))) {\
@@ -345,10 +350,14 @@ bool core_vec_remove(void *vec, size_t elem_size, size_t index);
     (arr)[(index)] = (value);\
 }while(0)
 #define vec_remove(vec, idx) core_vec_remove((vec), sizeof(*(vec)), (idx))
+#define vec_remove_unoreded(vec, idx) do {\
+    CORE_ASSERT(vec_len((vec)) >= idx);   \
+    (vec)[idx] = vec_pop((vec));          \
+}while(0)
 
 #define vec_move(arr) (arr)
 #define vec_copy(arr, ...) core_vec_copy((arr), sizeof((*arr)), (OptAllocArg){__VA_ARGS__})
-#define vec_at(arr, index) (CORE_ASSERT(index < vec_len(arr)), (arr)[(index)])
+#define vec_at(arr, index) (arr)[(CORE_ASSERT(index < vec_len(arr)), (index))]
 #define vec_iter(arr, iter) for(size_t (iter) = 0; (iter) < vec_len((arr)); (iter)++)
 #define vec_foreach(arr, item) for(__typeof__(*(arr)) *item = (arr); item != (arr) + vec_len((arr)); item++)
 #define vec_find(arr, pred, callback) core_vec_find((arr), sizeof(*(arr)), &(pred), sizeof((pred)), (callback))
@@ -358,14 +367,16 @@ void vec_dump(void *vec);
 //  ----------------------------------- //
 //                slice                 //
 //  ----------------------------------- //
-typedef struct _Slice {
-    void *data;
-    size_t len;
-}_Slice;
 
-#define Slice(ty) _Slice
-#define slice_copy(slice) (_Slice){ .data = (slice).data, .len = (slice).len }
-#define slice_from_vec(vec) (_Slice){ .data = vec, .len = vec_len(vec) }
+#define Slice(ty)       \
+    typedef struct {    \
+        (ty) *data;     \
+        size_t len;     \
+    } CORE_CONCAT((ty), Slice)
+
+/*#define Slice(ty) _Slice
+#define slice_copy(slice) (_Slice){ .data = (slice).data, .len = (slice).len }*/
+#define slice_from_vec(ty, vec) CORE_CONCAT((ty), Slice){ .data = vec, .len = vec_len(vec) }
 #define slice_to_vec(slice, ...) core_vec_create_from_parts_internal((slice).data, (slice).len, sizeof(*(slice).data), (OptAllocArg){__VA_ARGS__})
 
 //  ----------------------------------- //
@@ -399,7 +410,7 @@ typedef struct StaticArena {
     size_t size;
 }StaticArena;
 
-StaticArena static_arena_new_impl(size_t size, char buffer[size]);
+StaticArena static_arena_new_impl(size_t size, char *buffer);
 #define static_arena_new(buffer) static_arena_new_impl(CORE_ARRLEN(buffer), buffer)
 
 void *static_arena_alloc(StaticArena *alloc, size_t size);
@@ -462,6 +473,10 @@ typedef struct MemoryStats {
 }MemoryStats;
 #endif
 
+typedef struct Args {
+    Vec(StringView) args;
+}Args;
+
 typedef struct Context {
     Arena temp_arena;
     RingBuffer ring_buffer;
@@ -469,12 +484,16 @@ typedef struct Context {
     #ifdef CORE_MEM_DEBUG
     MemoryStats memory_stats;
     #endif
+    Args program_args;
 }Context;
 
 extern thread_local Context core_context;
 String tmp_printf(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
 StringView tmp_copy(StringView self);
 StringView tmp_copy_str(String *self);
+
+Vec(StringView) args();
+void make_args(int argc, char **argv);
 
 typedef struct Bitmap {
     char *data;
@@ -558,6 +577,24 @@ JsonValue json_string(JSON *self);
 */
 #ifdef CORE_IMPLEMENTATION
 #define ALLOC_ARG_OR_DEF(arg) (arg.allocator.alloc ? (CORE_ASSERT(arg.allocator.alloc&&arg.allocator.realloc&&arg.allocator.free), arg.allocator) : default_allocator)
+
+//  ----------------------------------- //
+//                entry                 //
+//  ----------------------------------- //
+#ifndef CORE_NO_ENTRY
+static void _core_context_init(void);
+int core_main();
+
+int main(int argc, char **argv) {
+    _core_context_init();
+    make_args(argc, argv);
+    return core_main();
+    vec_destroy(core_context.program_args.args);
+    arena_dealloc(&core_context.temp_arena);
+    ringbuffer_deinit(&core_context.ring_buffer);
+}
+#endif
+
 //  ----------------------------------- //
 //             string-impl              //
 //  ----------------------------------- //
@@ -1510,7 +1547,7 @@ void arena_print_stats(Arena *self) {
 //  ----------------------------------- //
 //            static-arena-impl         //
 //  ----------------------------------- //
-StaticArena static_arena_new_impl(size_t size, char buffer[size]) {
+StaticArena static_arena_new_impl(size_t size, char *buffer) {
     return (StaticArena) {
         .buffer = buffer,
         .current_alloc = buffer,
@@ -1718,6 +1755,22 @@ StringView tmp_copy_str(String *self) {
     return string_view_new(new, len);
 }
 
+Vec(StringView) args() {
+    CORE_ASSERT(core_context.program_args.args != NULL);
+    return core_context.program_args.args;
+}
+
+void make_args(int argc, char **argv) {
+    Allocator alloc = default_allocator;
+    Vec(StringView) args = vec_with_size(String, argc, .allocator = alloc);
+    for(int i = 0; i < argc; i++) {
+        vec_push(args, sv_from(argv[i]));
+    }
+    core_context.program_args = (Args) {
+        .args = args,
+    };
+}
+
 #if defined(__GNUC__) || defined(__clang__)
 #   define CORE_CONSTRUCTOR __attribute__((constructor))
 #   define CORE_DESTRUCTOR __attribute__((destructor))
@@ -1727,7 +1780,9 @@ StringView tmp_copy_str(String *self) {
 
 static void _core_context_init(void) {
     #ifdef CORE_MEM_DEBUG
-        core_context.memory_stats.allocations = vec_new(.allocator = std_alloc);
+        if(core_context.memory_stats.allocations == NULL) {
+            core_context.memory_stats.allocations = vec_new(.allocator = std_alloc);
+        }
     #endif
 }
 

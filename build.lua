@@ -4,7 +4,7 @@ return function (build)
     local tool_chain = "Clang";
     local warnings = { "Error", "Pedantic", "All", "Extra" };
     local no_warnings = { "DeprecatedDeclarations" };
-    local custom = {};
+    local custom = { "-ggdb", "-std=c23" };
     local libs = {};
 
     if tool_chain == "Clang" and build:host_os() == "Linux" then
