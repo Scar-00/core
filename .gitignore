@@ -1,0 +1,22 @@
+# Build outputs
+*.exe
+*.out
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.exp
+*.ilk
+*.pdb
+./test.c
+# Generated metadata
+compile_commands.json
+
+# Local tool state
+.cargoc/
+
+# Temporary files created by tests/examples
+test/tmp_core_roundtrip.txt
+test/tmp_core_roundtrip.bin
+examples/demo-output.txt

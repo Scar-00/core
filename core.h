@@ -81,6 +81,7 @@ typedef uintptr_t           ptr_t;
     { type var; for(size_t CORE_MACRO_VAR(i) = (var = begin, 0); !CORE_MACRO_VAR(i); (CORE_MACRO_VAR(i)++), end) body }
 #endif
 #define SHORT_STRING_LENGTH 24
+#define SHORT_STRING_CAPACITY (SHORT_STRING_LENGTH - 2)
 #ifndef ARENA_DEFAULT_ALLOC_SIZE
 #define ARENA_DEFAULT_ALLOC_SIZE CORE_KB(4)
 #endif
@@ -156,7 +157,7 @@ bool string_view_ends_with(StringView self, StringView predicate);
 #define sv_from string_view_from
 #define sv_new string_view_new
 #define sv_into_string string_view_into_string
-#define sv_contains stringstring_view_contains
+#define sv_contains string_view_contains
 
 typedef struct String {
     Allocator alloc;
@@ -240,7 +241,7 @@ void allocator_free_debug(Allocator *self, void *_block, size_t line, const char
 #define allocator_free(self, _block) allocator_free_debug((self), (_block), __LINE__, __FILE__)
 #else
 void *allocator_alloc_impl(Allocator *self, size_t size, OptAllocatorArg arg);
-#define allocator_alloc(self, size, ...) allocator_alloc_impl((self), (size), (OptAllocatorArg){__VA_ARGS__});
+#define allocator_alloc(self, size, ...) allocator_alloc_impl((self), (size), (OptAllocatorArg){__VA_ARGS__})
 void *allocator_realloc(Allocator *self, void *mem, size_t size);
 void allocator_free(Allocator *self, void *_block);
 #endif
@@ -576,7 +577,7 @@ JsonValue json_obj_end(JSON *self);
 JsonValue json_string(JSON *self);
 */
 #ifdef CORE_IMPLEMENTATION
-#define ALLOC_ARG_OR_DEF(arg) (arg.allocator.alloc ? (CORE_ASSERT(arg.allocator.alloc&&arg.allocator.realloc&&arg.allocator.free), arg.allocator) : default_allocator)
+#define ALLOC_ARG_OR_DEF(arg) (arg.allocator.alloc ? arg.allocator : default_allocator)
 
 //  ----------------------------------- //
 //                entry                 //
@@ -618,11 +619,11 @@ StringView string_view_copy(StringView self) {
 }
 
 bool string_view_contains(StringView self, StringView predicate) {
-    if(predicate.len == 0) {
+    if(predicate.len == 0 || predicate.len > self.len) {
         return false;
     }
 
-    for(size_t i = 0; i < self.len; i++) {
+    for(size_t i = 0; i <= self.len - predicate.len; i++) {
         if(partial_cmp_ptr(&self.data[i], predicate.data, predicate.len)) {
             return true;
         }
@@ -646,17 +647,17 @@ bool string_view_cmp_str(StringView self, String const *other) {
 }
 
 bool string_view_starts_with(StringView self, StringView predicate) {
-    if(self.len > predicate.len) {
+    if(predicate.len > self.len) {
         return false;
     }
     return partial_cmp_ptr(self.data, predicate.data, predicate.len);
 }
 
 bool string_view_ends_with(StringView self, StringView predicate) {
-    if(self.len > predicate.len) {
+    if(predicate.len > self.len) {
         return false;
     }
-    return partial_cmp_ptr_rev(self.data, predicate.data, predicate.len);
+    return partial_cmp_ptr(self.data + (self.len - predicate.len), predicate.data, predicate.len);
 }
 
 //  the caller needs to garuentee that both pointers are valid and cannot go oob
@@ -670,41 +671,58 @@ bool partial_cmp_ptr(const char *self, const char *predicate, size_t len) {
 }
 
 bool partial_cmp_ptr_rev(const char *self, const char *predicate, size_t len) {
-    for(size_t i = len; i > 0; i--) {
-        if(self[i] != predicate[i]) {
+    for(size_t i = 0; i < len; i++) {
+        if(self[len - 1 - i] != predicate[len - 1 - i]) {
             return false;
         }
     }
     return true;
 }
 
-static char string_cpy_buffer[SHORT_STRING_LENGTH] = {0};
+static size_t string_short_len(String const *self) {
+    return SHORT_STRING_CAPACITY - (unsigned char)self->data.s.data[SHORT_STRING_LENGTH - 1];
+}
+
+static void string_short_set_len(String *self, size_t len) {
+    CORE_ASSERT(len <= SHORT_STRING_CAPACITY && "error: short `String` length exceeds inline capacity");
+    self->data.s.data[len] = '\0';
+    self->data.s.data[SHORT_STRING_LENGTH - 1] = (char)(SHORT_STRING_CAPACITY - len);
+}
+
 static void string_transform(String *self) {
     if(self->type == STRING_LONG) {
         size_t len = self->data.l.len;
-        memcpy(string_cpy_buffer, self->data.l.ptr, len * sizeof(char));
+        CORE_ASSERT(len <= SHORT_STRING_CAPACITY && "error: cannot shrink `String` into short storage");
+        char buffer[SHORT_STRING_LENGTH] = {0};
+        memcpy(buffer, self->data.l.ptr, len * sizeof(char));
         allocator_free(&self->alloc, self->data.l.ptr);
-        memmove(self->data.s.data, string_cpy_buffer, len * sizeof(char));
+        memset(self->data.s.data, 0, sizeof(self->data.s.data));
+        memcpy(self->data.s.data, buffer, len * sizeof(char));
         self->type = STRING_SHORT;
-    }else {
-        memcpy(string_cpy_buffer, self->data.s.data, SHORT_STRING_LENGTH * sizeof(char));
-        self->data.l.ptr = allocator_alloc(&self->alloc, (SHORT_STRING_LENGTH + 1) * sizeof(char));
-        memcpy(self->data.l.ptr, string_cpy_buffer, SHORT_STRING_LENGTH * sizeof(char));
-        self->data.l.len = SHORT_STRING_LENGTH;
-        self->data.l.cap = SHORT_STRING_LENGTH + 1;
+        string_short_set_len(self, len);
+    } else {
+        size_t len = string_short_len(self);
+        size_t cap = SHORT_STRING_LENGTH;
+        char *ptr = allocator_alloc(&self->alloc, (cap + 1) * sizeof(char));
+        CORE_ASSERT(ptr && "error: failed to grow short `String`");
+        memcpy(ptr, self->data.s.data, len * sizeof(char));
+        ptr[len] = '\0';
+        self->data.l.ptr = ptr;
+        self->data.l.len = len;
+        self->data.l.cap = cap;
         self->type = STRING_LONG;
     }
-    memset(string_cpy_buffer, 0, sizeof(*string_cpy_buffer));
-    //printf("[info]: transformed string\n");
 }
 
 static void string_grow(String *self) {
     CORE_ASSERT(self && "error: cannot pass nullptr to `string_grow`");
     CORE_ASSERT(self->type == STRING_LONG && "error: cannot grow small `String`");
-    size_t new_size = (self->data.l.cap * STRING_GROW_FACTOR);
-    self->data.l.ptr = allocator_realloc(&self->alloc, self->data.l.ptr, new_size * sizeof(char));
+    size_t new_size = (size_t)(self->data.l.cap * STRING_GROW_FACTOR);
+    if(new_size <= self->data.l.cap) {
+        new_size = self->data.l.cap + 1;
+    }
+    self->data.l.ptr = allocator_realloc(&self->alloc, self->data.l.ptr, (new_size + 1) * sizeof(char));
     self->data.l.cap = new_size;
-    //printf("[info]: grew string\n");
 }
 
 String string_new_impl(OptAllocArg arg) {
@@ -715,7 +733,7 @@ String string_new_impl(OptAllocArg arg) {
         .data = {
             .s = {
                 .data = {
-                    [23] = SHORT_STRING_LENGTH,
+                    [SHORT_STRING_LENGTH - 1] = SHORT_STRING_CAPACITY,
                 },
             },
         },
@@ -726,50 +744,55 @@ String string_new_size_impl(size_t size, OptAllocArg arg) {
     Allocator alloc = ALLOC_ARG_OR_DEF(arg);
     String self = {
         .alloc = alloc,
-        .type = size + 1 > SHORT_STRING_LENGTH ? STRING_LONG : STRING_SHORT,
+        .type = size > SHORT_STRING_CAPACITY ? STRING_LONG : STRING_SHORT,
     };
     if(self.type == STRING_LONG) {
-        self.data.l.cap = size + 1;
+        self.data.l.cap = size;
         self.data.l.ptr = allocator_alloc(&alloc, (size + 1) * sizeof(char));
         memset(self.data.l.ptr, 0, (size + 1) * sizeof(char));
         CORE_ASSERT(self.data.l.ptr && "error: failed to allocate `String`");
-    }else {
-        self.data.s.data[23] = SHORT_STRING_LENGTH;
+    } else {
+        memset(self.data.s.data, 0, sizeof(self.data.s.data));
+        self.data.s.data[SHORT_STRING_LENGTH - 1] = SHORT_STRING_CAPACITY;
     }
     return self;
 }
 
 String string_from_impl(const char *ptr, OptAllocArg arg) {
     CORE_ASSERT(ptr && "error: cannot pass nullptr to `string_from`");
-    //FIXME: do not put the fucking nulltermination char in length ????
     size_t len = strlen(ptr);
     String self = string_new_size(len, .allocator = arg.allocator);
     if(self.type == STRING_LONG) {
         self.data.l.len = len;
-        strcpy(self.data.l.ptr, ptr);
-    }else {
-        self.data.s.data[23] = SHORT_STRING_LENGTH - len;
-        strcpy(self.data.s.data, ptr);
+        memcpy(self.data.l.ptr, ptr, (len + 1) * sizeof(char));
+    } else {
+        memcpy(self.data.s.data, ptr, len * sizeof(char));
+        string_short_set_len(&self, len);
     }
     return self;
 }
 
 String string_from_parts_impl(const char *ptr, size_t len, size_t cap, OptAllocArg arg) {
     Allocator alloc = ALLOC_ARG_OR_DEF(arg);
-    if(cap > SHORT_STRING_LENGTH) {
+    CORE_ASSERT(ptr && "error: cannot pass nullptr to `string_from_parts`");
+    CORE_ASSERT(len <= cap && "error: `String` length cannot exceed capacity");
+    if(cap > SHORT_STRING_CAPACITY) {
         String str = {
             .alloc = alloc,
             .type = STRING_LONG,
-            .data.l.ptr = allocator_alloc(&alloc, cap * sizeof(char)),
+            .data.l.ptr = allocator_alloc(&alloc, (cap + 1) * sizeof(char)),
             .data.l.len = len,
             .data.l.cap = cap,
         };
-        strcpy(str.data.l.ptr, ptr);
+        CORE_ASSERT(str.data.l.ptr && "error: failed to allocate `String`");
+        memcpy(str.data.l.ptr, ptr, len * sizeof(char));
+        str.data.l.ptr[len] = '\0';
         return str;
     }
-    String str = { .type = STRING_SHORT };
-    str.data.s.data[23] = SHORT_STRING_LENGTH - len;
-    strcpy(str.data.s.data, ptr);
+    String str = { .alloc = alloc, .type = STRING_SHORT };
+    memset(str.data.s.data, 0, sizeof(str.data.s.data));
+    memcpy(str.data.s.data, ptr, len * sizeof(char));
+    string_short_set_len(&str, len);
     return str;
 }
 
@@ -801,12 +824,12 @@ String string_vformat_opt(OptAllocArg arg, const char *fmt, va_list args) {
     String self = string_new_size(size, .allocator = alloc);
     if(self.type == STRING_SHORT) {
         vsnprintf(self.data.s.data, size + 1, fmt, args_copy);
-        self.data.s.data[size] = '\0';
-        self.data.s.data[23] = SHORT_STRING_LENGTH - size;
-    }else {
+        string_short_set_len(&self, size);
+    } else {
         vsnprintf(self.data.l.ptr, size + 1, fmt, args_copy);
         self.data.l.len = size;
     }
+    va_end(args_copy);
 
     return self;
 }
@@ -829,7 +852,7 @@ const char *string_cstr(String const *self) {
 size_t string_cap(String const *self) {
     CORE_ASSERT(self && "error: cannot pass nullptr to `string_cap`");
     if(self->type == STRING_SHORT) {
-        return SHORT_STRING_LENGTH;
+        return SHORT_STRING_CAPACITY;
     }
     return self->data.l.cap;
 }
@@ -837,7 +860,7 @@ size_t string_cap(String const *self) {
 size_t string_len(String const *self) {
     CORE_ASSERT(self && "error: cannot pass nullptr to `string_len`");
     if(self->type == STRING_SHORT) {
-        return SHORT_STRING_LENGTH - self->data.s.data[23];
+        return string_short_len(self);
     }
     return self->data.l.len;
 }
@@ -845,31 +868,31 @@ size_t string_len(String const *self) {
 void string_push(String *self, char c) {
     CORE_ASSERT(self && "error: cannot pass nullptr to `string_push`");
     if(self->type == STRING_SHORT) {
-        if((SHORT_STRING_LENGTH - self->data.s.data[23]) >= SHORT_STRING_LENGTH) {
+        size_t len = string_short_len(self);
+        if(len == SHORT_STRING_CAPACITY) {
             string_transform(self);
-            self->data.l.ptr[self->data.l.len - 1] = c;
-            self->data.l.ptr[self->data.l.len++] = '\0';
-            return;
         }
-        self->data.s.data[SHORT_STRING_LENGTH - self->data.s.data[23]] = c;
-        self->data.s.data[(SHORT_STRING_LENGTH - (self->data.s.data[23]--)) + 1] = '\0';
+    }
+    if(self->type == STRING_SHORT) {
+        size_t len = string_short_len(self);
+        self->data.s.data[len] = c;
+        string_short_set_len(self, len + 1);
         return;
     }
     if(self->data.l.len == self->data.l.cap) {
         string_grow(self);
     }
-    self->data.l.ptr[self->data.l.len - 1] = c;
-    self->data.l.ptr[self->data.l.len++] = '\0';
+    self->data.l.ptr[self->data.l.len++] = c;
+    self->data.l.ptr[self->data.l.len] = '\0';
 }
 
 void string_pushf(String *self, const char *fmt, ...) {
     va_list args, args_copy;
-    va_copy(args_copy, args);
     va_start(args, fmt);
+    va_copy(args_copy, args);
     size_t size = vsnprintf(NULL, 0, fmt, args);
     va_end(args);
     char *buffer = ringbuffer_alloc(&core_context.ring_buffer, size + 1);
-    va_start(args_copy, fmt);
     vsnprintf(buffer, size + 1, fmt, args_copy);
     va_end(args_copy);
     string_push_ptr(self, buffer);
@@ -877,7 +900,7 @@ void string_pushf(String *self, const char *fmt, ...) {
 
 void string_push_str(String *self, String other) {
     CORE_ASSERT(self && "error: cannot pass nullptr to `string_push_str`");
-    for(size_t i = 0; i < string_len(&other) - 1; i++) {
+    for(size_t i = 0; i < string_len(&other); i++) {
         string_push(self, string_cstr(&other)[i]);
     }
 }
@@ -893,10 +916,12 @@ void string_pop(String *self) {
     CORE_ASSERT(self && "error: cannot pass nullptr to `string_pop`");
     CORE_ASSERT(string_len(self) > 0 && "error: cannot pop from empty `String`");
     if(self->type == STRING_SHORT) {
-        self->data.s.data[(SHORT_STRING_LENGTH - ++self->data.s.data[23]) - 1] = '\0';
-    }else {
-        self->data.l.ptr[(--self->data.l.len) - 1] = '\0';
-        if((self->data.l.len) <= 24) {
+        size_t len = string_short_len(self) - 1;
+        string_short_set_len(self, len);
+    } else {
+        self->data.l.len--;
+        self->data.l.ptr[self->data.l.len] = '\0';
+        if(self->data.l.len <= SHORT_STRING_CAPACITY) {
             string_transform(self);
         }
     }
@@ -934,12 +959,13 @@ bool string_cmp_sv(String const *self, StringView other) {
 }
 
 bool string_contains(String *self, StringView predicate) {
-    if(predicate.len == 0) {
+    if(predicate.len == 0 || predicate.len > string_len(self)) {
         return false;
     }
 
     const char *self_ptr = string_cstr(self);
-    for(size_t i = 0; i < string_len(self); i++) {
+    size_t self_len = string_len(self);
+    for(size_t i = 0; i <= self_len - predicate.len; i++) {
         if(partial_cmp_ptr(&self_ptr[i], predicate.data, predicate.len)) {
             return true;
         }
@@ -1005,7 +1031,7 @@ void *allocator_alloc_debug(Allocator *self, size_t size, OptAllocatorArg arg, s
         if(!core_context.memory_stats.allocations) {
             core_context.memory_stats.allocations = vec_new(.allocator = std_alloc);
         }
-        auto alloc = self->alloc(self->self, size);
+        void *alloc = self->alloc(self->self, size);
         Allocation a = {alloc, size, line, sv(file), .freed_at = {}};
         vec_push(core_context.memory_stats.allocations, a);
         return alloc;
@@ -1170,23 +1196,21 @@ void ringbuffer_print_stats(RingBuffer *self) {
 //  ----------------------------------- //
 static String mode_to_string(FileMode_ mode) {
     String buffer = string_new_size(20, .allocator = scratch_allocator(&core_context.ring_buffer));
-    switch (mode) {
-        case FILE_READ: {
-            string_pushf(&buffer, "%s", "r");
-        } break;
-        case FILE_APPEND: {
-            string_pushf(&buffer, "%s", "a");
-        } break;
-        case FILE_WRITE: {
-            string_pushf(&buffer, "%s", "w");
-        } break;
-        case FILE_PLUS: {
-            string_pushf(&buffer, "%s", "+");
-        } break;
-        case FILE_BIN: {
-            string_pushf(&buffer, "%s", "b");
-        } break;
+    if(FLAG_HAS(mode, FILE_READ)) {
+        string_push(&buffer, 'r');
+    } else if(FLAG_HAS(mode, FILE_APPEND)) {
+        string_push(&buffer, 'a');
+    } else if(FLAG_HAS(mode, FILE_WRITE)) {
+        string_push(&buffer, 'w');
     }
+
+    if(FLAG_HAS(mode, FILE_PLUS)) {
+        string_push(&buffer, '+');
+    }
+    if(FLAG_HAS(mode, FILE_BIN)) {
+        string_push(&buffer, 'b');
+    }
+
     return buffer;
 }
 
@@ -1228,9 +1252,9 @@ String file_read_impl(FileHandle self, OptAllocArg arg) {
     char *content = allocator_alloc(&alloc, (size + 1) * sizeof(char));
     if(!content)
         return string_new(.allocator = alloc);
-    fread(content, sizeof(char), size, self->fd);
-    content[size] = '\0';
-    String str = string_from_parts(content, size, size + 1, .allocator = alloc);
+    size_t read = fread(content, sizeof(char), size, self->fd);
+    content[read] = '\0';
+    String str = string_from_parts(content, read, read, .allocator = alloc);
     allocator_free(&alloc, content);
     return str;
 }
@@ -1243,15 +1267,15 @@ Vec(char) file_read_binary_impl(FileHandle self, OptAllocArg arg) {
     char *content = allocator_alloc(&alloc, (size + 1) * sizeof(char));
     if(!content)
         return vec_new(.allocator = alloc);
-    fread(content, sizeof(char), size, self->fd);
-    Vec(char) vec = vec_from_parts(char, content, size, .allocator = alloc);
+    size_t read = fread(content, sizeof(char), size, self->fd);
+    Vec(char) vec = vec_from_parts(char, content, read, .allocator = alloc);
     allocator_free(&alloc, content);
     return vec;
 }
 
 bool file_write_raw(FileHandle self, const char *data, size_t len) {
     fwrite(data, sizeof(char), len, self->fd);
-    return ferror(self->fd) != 0;
+    return ferror(self->fd) == 0;
 }
 
 bool file_write(FileHandle self, const StringView data) {
@@ -1259,7 +1283,9 @@ bool file_write(FileHandle self, const StringView data) {
 }
 
 bool file_exists(const StringView path) {
-    FILE *fd = fopen(path.data, "r");
+    String path_str = string_view_into_string(path);
+    FILE *fd = fopen(string_cstr(&path_str), "r");
+    string_destroy(&path_str);
     if(fd) {
         fclose(fd);
         return true;
@@ -1744,7 +1770,8 @@ String tmp_printf(const char *fmt, ...) {
 
 StringView tmp_copy(StringView self) {
     char *new = ringbuffer_alloc(&core_context.ring_buffer, (self.len + 1) * sizeof(*self.data));
-    memcpy(new, self.data, self.len + 1);
+    memcpy(new, self.data, self.len);
+    new[self.len] = '\0';
     return string_view_new(new, self.len);
 }
 
@@ -2144,7 +2171,7 @@ bool json_is_number(JsonValue *self) {
 }
 
 bool json_is_null(JsonValue *self) {
-    return self->kind == JSON_VALUE_NUMBER;
+    return self->kind == JSON_VALUE_NULL;
 }
 
 bool json_is_bool(JsonValue *self) {
