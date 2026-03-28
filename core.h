@@ -1,13 +1,149 @@
 #ifndef _CORE_H_
 #define _CORE_H_
 
-#include <corecrt_search.h>
+/*
+core.h - single-header utility library
+
+USAGE
+
+    Include `core.h` anywhere you need declarations:
+
+        #include "core.h"
+
+    In exactly one `.c` file, define `CORE_IMPLEMENTATION` before the
+    include to emit the implementation:
+
+        #define CORE_IMPLEMENTATION
+        #include "core.h"
+
+    When `CORE_IMPLEMENTATION` is enabled, the header also defines `main()`
+    by default. To use the built-in entry point, implement
+    `int core_main(void)` in your program:
+
+        #define CORE_IMPLEMENTATION
+        #include "core.h"
+
+        int core_main(void) {
+            String greeting = string_from("hello");
+            string_pushf(&greeting, ", %s", "world");
+            println(STRING_FMT, STRING_ARG(&greeting));
+            string_destroy(&greeting);
+            return 0;
+        }
+
+    If you want your own `main()`, define `CORE_NO_ENTRY` before including
+    the implementation:
+
+        #define CORE_NO_ENTRY
+        #define CORE_IMPLEMENTATION
+        #include "core.h"
+
+        int main(int argc, char **argv) {
+            make_args(argc, argv);
+            println("argc = %zu", vec_len(args()));
+            return 0;
+        }
+
+CONFIGURATION
+
+    Define these before including `core.h`:
+
+        CORE_IMPLEMENTATION
+            Emit the function implementations. Define this in exactly one
+            translation unit.
+
+        CORE_NO_ENTRY
+            Do not generate `main()` when `CORE_IMPLEMENTATION` is enabled.
+            Use this if your program already has its own entry point.
+
+        CORE_NO_STD
+            Disable APIs that depend on the C standard library.
+
+        CORE_MEM_DEBUG
+            Enable allocation tracking and debug allocator wrappers.
+
+        STRING_GROW_FACTOR
+            Override the string growth multiplier. Default: `1.5`.
+
+        ARENA_DEFAULT_ALLOC_SIZE
+            Override the default arena chunk size. Default: `CORE_KB(4)`.
+
+        RINGBUFFER_SIZE
+            Override the scratch ring buffer size. Default: `CORE_KB(4)`.
+
+OVERVIEW
+
+    Strings
+        `StringView` is a non-owning `{ len, data }` pair.
+        `String` is an owning string with short-string optimization.
+
+    Allocators
+        Most constructors accept `.allocator = ...` through optional macro
+        arguments. If omitted, `default_allocator` is used.
+
+    Temporary storage
+        `tmp_printf()`, `tmp_copy()`, and related helpers allocate from the
+        thread-local scratch ring buffer in `core_context`.
+
+    Vectors
+        `Vec(T)` is a stretchy-buffer style dynamic array accessed through
+        macros like `vec_new`, `vec_push`, `vec_len`, and `vec_destroy`.
+
+    Arenas
+        `Arena` and `StaticArena` provide bump allocators for bulk lifetime
+        management.
+
+    Files and JSON
+        The header includes lightweight file helpers and a small JSON parser
+        / serializer.
+
+EXAMPLES
+
+    Strings:
+
+        String path = string_format("%s/%s", "assets", "config.json");
+        println(STRING_FMT, STRING_ARG(&path));
+        string_destroy(&path);
+
+    Vectors:
+
+        Vec(int) numbers = vec_new();
+        vec_push(numbers, 10);
+        vec_push(numbers, 20);
+        println("len=%zu last=%d", vec_len(numbers), vec_pop(numbers));
+        vec_destroy(numbers);
+
+    Arena-backed allocation:
+
+        Arena arena = arena_new(CORE_KB(8));
+        String msg = string_from("arena string", .allocator = arena_allocator(&arena));
+        println(STRING_FMT, STRING_ARG(&msg));
+        string_destroy(&msg);
+        arena_dealloc(&arena);
+
+    Files:
+
+        if(file_write_string(sv("note.txt"), sv("hello\n"))) {
+            String text = file_read_to_string(sv("note.txt"));
+            println(STRING_FMT, STRING_ARG(&text));
+            string_destroy(&text);
+        }
+
+    JSON:
+
+        JSON json = json_parse(sv("{\"name\":\"core\",\"version\":1}"));
+        String pretty = json_to_string(&json, .pretty_print = 2);
+        println(STRING_FMT, STRING_ARG(&pretty));
+        string_destroy(&pretty);
+        json_free(json);
+*/
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define CORE_IMPLEMENTATION
-
+#ifndef CORE_NO_STD
+#include <corecrt_search.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -18,6 +154,7 @@ extern "C" {
 #include <assert.h>
 #include <threads.h>
 #include <ctype.h>
+#endif //CORE_NO_STD
 
 #ifdef _WIN32
     #define PLATFORM_WIN32
@@ -27,29 +164,38 @@ extern "C" {
 
 #ifndef STRING_GROW_FACTOR
 #define STRING_GROW_FACTOR 1.5
-#endif
+#endif//STRING_GROW_FACTOR
 
-#ifdef CORE_DEBUG_ASSERT
-#define CORE_ASSERT(e) assert(e)
+#if defined(CORE_DEBUG_ASSERT) || !(defined(assert) && defined(static_assert))
+#define CORE_STATIC_ASSERT(e, msg) static_assert((e), msg)
+#define CORE_ASSERT(e) assert((e))
 #else
 #define CORE_ASSERT(e)
+#define CORE_STATIC_ASSERT(e, msg)
 #endif
 
 //float types
 typedef double              f64;
 typedef float               f32;
 //signed types
-typedef int64_t             i64;
-typedef int32_t             i32;
-typedef int16_t             i16;
-typedef int8_t              i8;
+typedef long long int       i64;
+typedef int                 i32;
+typedef short               i16;
+typedef char                i8;
 
 //unsigned types
-typedef uint64_t            u64;
-typedef uint32_t            u32;
-typedef uint16_t            u16;
-typedef uint8_t             u8;
-typedef uintptr_t           ptr_t;
+typedef unsigned long long  u64;
+typedef unsigned int        u32;
+typedef unsigned short      u16;
+typedef unsigned char       u8;
+typedef u64                 ptr_t;
+
+CORE_STATIC_ASSERT(sizeof(f64) == 8, "expected sizeof(f64) == 8");
+CORE_STATIC_ASSERT(sizeof(f32) == 4, "expected sizeof(f32) == 4");
+CORE_STATIC_ASSERT(sizeof(i64) == 8 && sizeof(u64) == 8, "expected sizeof(i/u64) == 8");
+CORE_STATIC_ASSERT(sizeof(i32) == 4 && sizeof(u32) == 4, "expected sizeof(i/u32) == 4");
+CORE_STATIC_ASSERT(sizeof(i16) == 2 && sizeof(u16) == 2, "expected sizeof(i/u16) == 2");
+CORE_STATIC_ASSERT(sizeof(i8)  == 1 && sizeof(u8)  == 1, "expected sizeof(i/u8) == 1");
 
 #define CORE_UNUSED(value) (void)(value)
 #define CORE_TODO(message) do { fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, message); abort(); } while(0)
@@ -59,8 +205,14 @@ typedef uintptr_t           ptr_t;
 #define CORE_UNREACHABLE(message) do { fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message); __assume(false); } while(0)
 #endif
 
-#define KB 1024
-#define CORE_KB(x) ((x) * KB)
+#if defined(PLATFORM_WIN32)
+#define PATH_SEP "\\"
+#elif defined(PLATFORM_POSIX)
+#define PATH_SEP "/"
+#endif
+
+#define _KB 1024
+#define CORE_KB(x) ((x) * _KB)
 #define CORE_MB(x) (CORE_KB(x) * 1000)
 
 #define CORE_BIT(x) 1 << (x)
@@ -74,11 +226,11 @@ typedef uintptr_t           ptr_t;
 #define core_defer(begin, end) \
     for(size_t CORE_MACRO_VAR(i) = (begin, 0); !CORE_MACRO_VAR(i); (CORE_MACRO_VAR(i)++), end)
 #if __STDC_VERSION__ >= 202000
-#define core_defer_var(var, begin, end, body) \
-    { auto var = begin; for(size_t CORE_MACRO_VAR(i) = (0); !CORE_MACRO_VAR(i); (CORE_MACRO_VAR(i)++), end) body }
+#define core_defer_var(var, begin, end, ...) \
+    { auto var = begin; for(size_t CORE_MACRO_VAR(i) = (0); !CORE_MACRO_VAR(i); (CORE_MACRO_VAR(i)++), end) __VA_ARGS__ }
 #else
-#define core_defer_var(type, var, begin, end, body) \
-    { type var; for(size_t CORE_MACRO_VAR(i) = (var = begin, 0); !CORE_MACRO_VAR(i); (CORE_MACRO_VAR(i)++), end) body }
+#define core_defer_var(type, var, begin, end, ...) \
+    { type var; for(size_t CORE_MACRO_VAR(i) = (var = begin, 0); !CORE_MACRO_VAR(i); (CORE_MACRO_VAR(i)++), end) __VA_ARGS__ }
 #endif
 #define SHORT_STRING_LENGTH 24
 #define SHORT_STRING_CAPACITY (SHORT_STRING_LENGTH - 2)
@@ -120,7 +272,6 @@ typedef struct Allocator{
 typedef struct OptAllocArg { Allocator allocator; } OptAllocArg;
 extern Allocator default_allocator;
 
-void *allocate_in_impl(void *item, size_t item_size, OptAllocArg arg);
 #define allocate_in(item, ...) memcpy(\
     allocator_alloc(\
         (OptAllocArg){__VA_ARGS__}.allocator.alloc ?\
@@ -133,6 +284,10 @@ void *allocate_in_impl(void *item, size_t item_size, OptAllocArg arg);
 
 #define to_heap(item) allocate_in((item), .allocator = default_allocator)
 #define cloned(item) to_heap((item))
+
+#ifndef strlen
+size_t strlen(const char *str);
+#endif//CORE_NO_STD
 //  ----------------------------------- //
 //                string                //
 //  ----------------------------------- //
@@ -230,7 +385,7 @@ typedef struct String String;
 
 typedef struct OptAllocatorArg { bool zeroed; } OptAllocatorArg;
 
-Allocator default_allocator;
+extern Allocator default_allocator;
 
 #ifdef CORE_MEM_DEBUG
 void *allocator_alloc_debug(Allocator *self, size_t size, OptAllocatorArg arg, size_t line, const char *file);
@@ -268,6 +423,7 @@ void ringbuffer_print_stats(RingBuffer *self);
 //  ----------------------------------- //
 //                 file                 //
 //  ----------------------------------- //
+#ifndef CORE_NO_STD
 typedef u32 FileMode_;
 typedef enum FileMode {
     FILE_READ       = CORE_BIT(0),
@@ -306,7 +462,7 @@ bool file_write_slice(StringView path, char *data, size_t elems);
 FileHandle stdio_get(void);
 FileHandle stderr_get(void);
 FileHandle stdin_get(void);
-
+#endif //CORE_NO_STD
 //  ----------------------------------- //
 //               vector                 //
 //  ----------------------------------- //
@@ -492,12 +648,17 @@ extern thread_local Context core_context;
 String tmp_printf(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
 StringView tmp_copy(StringView self);
 StringView tmp_copy_str(String *self);
+#define tmp_copy_vec(vec) core_vec_copy(                                        \
+    (vec),                                                                      \
+    sizeof(*(vec)),                                                             \
+    (OptAllocArg){.allocator = ringbuffer_allocator(&core_context.ring_buffer)} \
+)
 
 Vec(StringView) args();
 void make_args(int argc, char **argv);
 
 typedef struct Bitmap {
-    char *data;
+    Vec(char) data;
     size_t width;
     size_t height;
     size_t stride;
@@ -1016,6 +1177,8 @@ Allocator std_alloc = {
     .free = _std_free,
 };
 
+Allocator default_allocator;
+
 static Allocation *_core_allocation_find(void *addr) {
     vec_foreach(core_context.memory_stats.allocations, alloc) {
         if(alloc->addr == addr) {
@@ -1131,9 +1294,14 @@ Allocator default_allocator = {
     .free = _std_free,
 };
 
-/*void *allocate_in_impl(void *item, size_t item_size, OptAllocArg arg) {
-    return ;
-}*/
+#ifndef strlen
+size_t strlen(const char *str) {
+    CORE_ASSERT(str != NULL && "cannot pass NULL to strlen");
+    int len = 0;
+    while(*str++) len++;
+    return len;
+}
+#endif//CORE_NO_STD
 
 RingBuffer ringbuffer_init_impl(OptAllocArg args) {
     Allocator alloc = ALLOC_ARG_OR_DEF(args);
@@ -1153,8 +1321,9 @@ void ringbuffer_deinit(RingBuffer *self) {
 }
 
 void *ringbuffer_alloc(RingBuffer *self, size_t size) {
+    CORE_ASSERT(self != NULL && "cannot pass NULL to ringbuffer_alloc");
     if(!self || (self && self->base == NULL)) {
-        *self = ringbuffer_init(.allocator = self->alloc);
+        *self = ringbuffer_init();
     }
 
     if(size > self->size) {
@@ -1194,6 +1363,7 @@ void ringbuffer_print_stats(RingBuffer *self) {
 //  ----------------------------------- //
 //               file-impl              //
 //  ----------------------------------- //
+#ifndef CORE_NO_STD
 static String mode_to_string(FileMode_ mode) {
     String buffer = string_new_size(20, .allocator = scratch_allocator(&core_context.ring_buffer));
     if(FLAG_HAS(mode, FILE_READ)) {
@@ -1229,6 +1399,8 @@ FileHandle file_open_impl(StringView path, FileMode_ mode, OptAllocArg arg) {
         .alloc = alloc,
     };
     if(!self->fd) {
+        string_destroy(&self->path);
+        allocator_free(&alloc, self);
         return NULL;
     }
     return self;
@@ -1236,6 +1408,7 @@ FileHandle file_open_impl(StringView path, FileMode_ mode, OptAllocArg arg) {
 
 void file_close(FileHandle self) {
     fclose(self->fd);
+    string_destroy(&self->path);
     allocator_free(&self->alloc, self);
     self = NULL;
 }
@@ -1283,9 +1456,8 @@ bool file_write(FileHandle self, const StringView data) {
 }
 
 bool file_exists(const StringView path) {
-    String path_str = string_view_into_string(path);
+    String path_str = string_view_into_string(path, .allocator = ringbuffer_allocator(&core_context.ring_buffer));
     FILE *fd = fopen(string_cstr(&path_str), "r");
-    string_destroy(&path_str);
     if(fd) {
         fclose(fd);
         return true;
@@ -1296,7 +1468,7 @@ bool file_exists(const StringView path) {
 
 String file_read_to_string_impl(StringView path, OptAllocArg arg) {
     FileHandle file = file_open(path, FILE_READ, .allocator = arg.allocator);
-#ifndef CORE_DEBUG
+#ifndef CORE_MEM_DEBUG
     if(!file) {
         fprintf(stderr, "[INFO]: failed to open file `%*s`", (int)path.len,  path.data);
     }
@@ -1308,7 +1480,7 @@ String file_read_to_string_impl(StringView path, OptAllocArg arg) {
 
 Vec(char) file_read_to_vec_impl(StringView path, OptAllocArg arg) {
     FileHandle file = file_open(path, FILE_READ | FILE_BIN, .allocator = arg.allocator);
-#ifndef CORE_DEBUG
+#ifndef CORE_MEM_DEBUG
     if(!file) {
         fprintf(stderr, "[INFO]: failed to open file `%*s`", (int)path.len,  path.data);
     }
@@ -1386,7 +1558,7 @@ FileHandle stdin_get(void) {
     }
     return &in;
 }
-
+#endif //CORE_NO_STD
 //  ----------------------------------- //
 //             vector-impl              //
 //  ----------------------------------- //
@@ -1783,7 +1955,7 @@ StringView tmp_copy_str(String *self) {
 }
 
 Vec(StringView) args() {
-    CORE_ASSERT(core_context.program_args.args != NULL);
+    CORE_ASSERT(core_context.program_args.args != NULL && "call `make_args()` before calling `args()`");
     return core_context.program_args.args;
 }
 
@@ -1801,8 +1973,6 @@ void make_args(int argc, char **argv) {
 #if defined(__GNUC__) || defined(__clang__)
 #   define CORE_CONSTRUCTOR __attribute__((constructor))
 #   define CORE_DESTRUCTOR __attribute__((destructor))
-#else
-#    #error you need to call `context_init` manually on msvc
 #endif
 
 static void _core_context_init(void) {

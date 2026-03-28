@@ -6,24 +6,28 @@ return function (build)
     local no_warnings = { "DeprecatedDeclarations" };
     local custom = { "-ggdb", "-std=c23" };
     local libs = {};
+    local includes = { "." };
 
     if tool_chain == "Clang" and build:host_os() == "Linux" then
         custom = { "-fsanitize=memory", "-ggdb", "-std=c23" };
     end
 
-    if tool_chain == "Msvc" then
-        warnings = {};
-        no_warnings = {};
+    if build:host_os() == "Windows" then
         libs = { "-luser32" };
     end
 
+    if tool_chain == "Msvc" then
+        warnings = {};
+        no_warnings = {};
+    end
+
     local test = build:add_binary({
-        name = "test",
+        name = "test_core",
         tool_chain = tool_chain,
         opt_level = build:default_opt_level(),
-        files = { "./test.c" },
-        output = "test",
-        includes = { "../work/aimline/" },
+        files = { "./test/test_core.c" },
+        output = "test_core",
+        includes = includes,
         libs = libs,
         args = { warnings = warnings, no_warnings = no_warnings, custom = custom }
     });
@@ -32,9 +36,9 @@ return function (build)
     end
     local test_exe = test:build_and_install();
     if not test_exe then
-        error("failed to build `test`");
+        error("failed to build `test_core`");
     end
     if build:wants_run() then
-        build:run(test_exe, { "test", "foo", "bar" });
+        build:run(test_exe, {});
     end
 end
