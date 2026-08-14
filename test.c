@@ -14,7 +14,7 @@ int core_main() {
     println("str = "SV_FMT, SV_ARG(view));
 
     String str = string_from("Foo Bar");
-    println("string = "STRING_FMT, STRING_ARG(&str));
+    println("string = "STRING_FMT, STRING_ARG(str));
 
     ringbuffer_print_stats(&core_context.ring_buffer);
     arena_print_stats(&core_context.temp_arena);

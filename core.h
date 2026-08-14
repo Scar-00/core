@@ -26,7 +26,7 @@ USAGE
         int core_main(void) {
             String greeting = string_from("hello");
             string_pushf(&greeting, ", %s", "world");
-            println(STRING_FMT, STRING_ARG(&greeting));
+            println(STRING_FMT, STRING_ARG(greeting));
             string_destroy(&greeting);
             return 0;
         }
@@ -102,7 +102,7 @@ EXAMPLES
     Strings:
 
         String path = string_format("%s/%s", "assets", "config.json");
-        println(STRING_FMT, STRING_ARG(&path));
+        println(STRING_FMT, STRING_ARG(path));
         string_destroy(&path);
 
     Vectors:
@@ -117,7 +117,7 @@ EXAMPLES
 
         Arena arena = arena_new(CORE_KB(8));
         String msg = string_from("arena string", .allocator = arena_allocator(&arena));
-        println(STRING_FMT, STRING_ARG(&msg));
+        println(STRING_FMT, STRING_ARG(msg));
         string_destroy(&msg);
         arena_dealloc(&arena);
 
@@ -125,7 +125,7 @@ EXAMPLES
 
         if(file_write_string(sv("note.txt"), sv("hello\n"))) {
             String text = file_read_to_string(sv("note.txt"));
-            println(STRING_FMT, STRING_ARG(&text));
+            println(STRING_FMT, STRING_ARG(text));
             string_destroy(&text);
         }
 
@@ -133,7 +133,7 @@ EXAMPLES
 
         JSON json = json_parse(sv("{\"name\":\"core\",\"version\":1}"));
         String pretty = json_to_string(&json, .pretty_print = 2);
-        println(STRING_FMT, STRING_ARG(&pretty));
+        println(STRING_FMT, STRING_ARG(pretty));
         string_destroy(&pretty);
         json_free(json);
 */
@@ -152,7 +152,7 @@ extern "C" {
 #include <stdio.h>
 #include <stdarg.h>
 #include <assert.h>
-#include <threads.h>
+//#include <threads.h>
 #include <ctype.h>
 #endif //CORE_NO_STD
 
@@ -374,7 +374,7 @@ typedef struct StringView StringView;
 typedef struct String String;
 
 #define STRING_FMT "%*s"
-#define STRING_ARG(str) ((int)string_len((str))), string_cstr((str))
+#define STRING_ARG(str) ((int)string_len((&str))), string_cstr((&str))
 
 #define SV_FMT "%*s"
 #define SV_ARG(sv) ((int)(sv).len), (sv).data
