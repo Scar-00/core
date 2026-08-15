@@ -143,7 +143,6 @@ extern "C" {
 #endif
 
 #ifndef CORE_NO_STD
-#include <corecrt_search.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -1734,7 +1733,7 @@ Allocator arena_allocator(Arena *self) {
 }
 
 void arena_print_stats(Arena *self) {
-    println("Arena { buffer: %p, curent: %p, size: 0x%zx, next: %p }",
+    println("Arena { buffer: %p, curent: %p, size: 0x%llx, next: %p }",
         (void*)self->buffer,
         (void*)self->current_alloc,
         (ptr_t)self->current_alloc - (ptr_t)self->buffer,
@@ -1784,7 +1783,7 @@ Allocator static_arena_allocator(StaticArena *self) {
 }
 
 void static_arena_print_stats(StaticArena *self) {
-    println("StaticArena { buffer: %p, curent: %p, size: 0x%zx, buf-size: %zu }",
+    println("StaticArena { buffer: %p, curent: %p, size: 0x%llx, buf-size: %zu }",
         self->buffer,
         self->current_alloc,
         (ptr_t)self->current_alloc - (ptr_t)self->buffer,
