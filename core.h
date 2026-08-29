@@ -57,7 +57,20 @@ CONFIGURATION
             Use this if your program already has its own entry point.
 
         CORE_NO_STD
-            Disable APIs that depend on the C standard library.
+            Disable APIs that depend on the C standard library. With this set,
+            `core.h` no longer pulls in `<stdlib.h>`, `<stdio.h>`, `<assert.h>`
+            or `<ctype.h>` and does not reference `malloc`/`free`, `fopen`/`fprintf`,
+            `vsnprintf`, `strtod`, etc. Concretely:
+
+              * `File` I/O (`file_*`, `fprint`/`fprintln`) is not available.
+              * `print`/`println`/`log` are still emitted but forward their output
+                to `core_stdout_write`/`core_stderr_write` (default: no-op). Define
+                your own to route text to a console/syscall.
+              * a built-in static bump allocator (sized by `CORE_NO_STD_HEAP_SIZE`,
+                default 1 MiB) is used as `default_allocator`.
+              * small freestanding replacements for `strlen`, `isspace`/`isdigit`/
+                `isalpha`, `strtod` and `vsnprintf`/`snprintf` are provided, so
+                strings, vectors, arenas, JSON and formatting keep working.
 
         CORE_MEM_DEBUG
             Enable allocation tracking and debug allocator wrappers.
@@ -142,17 +155,38 @@ EXAMPLES
 extern "C" {
 #endif
 
-#ifndef CORE_NO_STD
-#include <stdlib.h>
+//  freestanding headers are always available, even without a C standard library
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdarg.h>
+
+#ifndef CORE_NO_STD
+//  the rest of the standard library is only pulled in when `CORE_NO_STD` is not set
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdarg.h>
 #include <assert.h>
 //#include <threads.h>
 #include <ctype.h>
+#else
+//  when `CORE_NO_STD` is set we provide small freestanding replacements for the
+//  few standard library routines that the (non I/O) parts of `core.h` rely on.
+//  `memcpy`/`memset`/`memmove` are emitted by the compiler as builtins (and are
+//  provided by the compiler runtime), so they only need to be declared here.
+void *memcpy(void *dest, const void *src, size_t n);
+void *memset(void *s, int c, size_t n);
+void *memmove(void *dest, const void *src, size_t n);
+
+int isspace(int c);
+int isdigit(int c);
+int isalpha(int c);
+int isalnum(int c);
+
+double strtod(const char *nptr, char **endptr);
+
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap);
+int snprintf(char *buf, size_t size, const char *fmt, ...);
 #endif //CORE_NO_STD
 
 #ifdef _WIN32
@@ -165,12 +199,22 @@ extern "C" {
 #define STRING_GROW_FACTOR 1.5
 #endif//STRING_GROW_FACTOR
 
-#if defined(CORE_DEBUG_ASSERT) || !(defined(assert) && defined(static_assert))
-#define CORE_STATIC_ASSERT(e, msg) static_assert((e), msg)
-#define CORE_ASSERT(e) assert((e))
+#if defined(__GNUC__) || defined(__clang__)
+#define CORE_TRAP() __builtin_trap()
+#elif defined(_MSC_VER)
+#define CORE_TRAP() __debugbreak()
 #else
-#define CORE_ASSERT(e)
-#define CORE_STATIC_ASSERT(e, msg)
+#define CORE_TRAP() ((void)0)
+#endif
+
+#define CORE_STATIC_ASSERT(e, msg) _Static_assert((e), msg)
+
+#if defined(CORE_DEBUG_ASSERT) && !defined(CORE_NO_STD)
+#define CORE_ASSERT(e) assert((e))
+#elif defined(CORE_DEBUG_ASSERT)
+#define CORE_ASSERT(e) ((e) ? (void)0 : CORE_TRAP())
+#else
+#define CORE_ASSERT(e) ((void)(e))
 #endif
 
 //float types
@@ -197,11 +241,18 @@ CORE_STATIC_ASSERT(sizeof(i16) == 2 && sizeof(u16) == 2, "expected sizeof(i/u16)
 CORE_STATIC_ASSERT(sizeof(i8)  == 1 && sizeof(u8)  == 1, "expected sizeof(i/u8) == 1");
 
 #define CORE_UNUSED(value) (void)(value)
+#ifndef CORE_NO_STD
 #define CORE_TODO(message) do { fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, message); abort(); } while(0)
-#if defined(__GNUC__) || defined(__clang__)
-#define CORE_UNREACHABLE(message) do { fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message); __builtin_unreachable(); } while(0)
 #else
-#define CORE_UNREACHABLE(message) do { fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message); __assume(false); } while(0)
+#define CORE_TODO(message) do { (void)(message); CORE_TRAP(); } while(0)
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define CORE_UNREACHABLE(message) __builtin_unreachable()
+#elif defined(_MSC_VER)
+#define CORE_UNREACHABLE(message) __assume(false)
+#else
+#define CORE_UNREACHABLE(message) CORE_TRAP()
 #endif
 
 #if defined(PLATFORM_WIN32)
@@ -284,9 +335,9 @@ extern Allocator default_allocator;
 #define to_heap(item) allocate_in((item), .allocator = default_allocator)
 #define cloned(item) to_heap((item))
 
-#ifndef strlen
+#ifdef CORE_NO_STD
 size_t strlen(const char *str);
-#endif//CORE_NO_STD
+#endif
 //  ----------------------------------- //
 //                string                //
 //  ----------------------------------- //
@@ -582,8 +633,10 @@ void static_arena_print_stats(StaticArena *self);
 //  ----------------------------------- //
 i32 print(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
 i32 println(const char *fmt, ...) CORE_PRINTF_FORMAT(1, 2);
+#ifndef CORE_NO_STD
 i32 fprint(FileHandle stream, const char *fmt, ...) CORE_PRINTF_FORMAT(2, 3);
 i32 fprintln(FileHandle stream, const char *fmt, ...) CORE_PRINTF_FORMAT(2, 3);
+#endif
 
 typedef enum LogLevel {
     CORE_TRACE,
@@ -749,10 +802,13 @@ int core_main();
 int main(int argc, char **argv) {
     _core_context_init();
     make_args(argc, argv);
-    return core_main();
+    int ret = core_main();
+    fflush(stdout);
+    fflush(stderr);
     vec_destroy(core_context.program_args.args);
     arena_dealloc(&core_context.temp_arena);
     ringbuffer_deinit(&core_context.ring_buffer);
+    return ret;
 }
 #endif
 
@@ -1143,7 +1199,7 @@ void string_dump(String const *self) {
         data = string_cstr(self);
     }
 
-    fprintf(stdout, "String { data: \"%s\", len: %zu, cap: %zu, type: %s }\n",
+    println("String { data: \"%s\", len: %zu, cap: %zu, type: %s }",
             data,
             string_len(self),
             string_cap(self),
@@ -1162,18 +1218,39 @@ StringView string_into_view(String const *self) {
 }
 
 //  ----------------------------------- //
+//        allocator backends            //
+//  ----------------------------------- //
+#ifndef CORE_NO_STD
+void *_std_alloc(void *self, size_t size);
+void *_std_realloc(void *self, void *mem, size_t size);
+void _std_free(void *self, void *_block);
+#define CORE_UNDERLYING_ALLOC _std_alloc
+#define CORE_UNDERLYING_REALLOC _std_realloc
+#define CORE_UNDERLYING_FREE _std_free
+#else
+//  when there is no standard library we fall back to a simple global bump
+//  allocator. it never frees, so it is only suitable for short-lived programs;
+//  override `CORE_NO_STD_HEAP_SIZE` to size the backing buffer.
+#ifndef CORE_NO_STD_HEAP_SIZE
+#define CORE_NO_STD_HEAP_SIZE CORE_MB(1)
+#endif
+void *_core_bump_alloc(void *self, size_t size);
+void *_core_bump_realloc(void *self, void *mem, size_t size);
+#define CORE_UNDERLYING_ALLOC _core_bump_alloc
+#define CORE_UNDERLYING_REALLOC _core_bump_realloc
+#define CORE_UNDERLYING_FREE _core_noop_free
+#endif
+
+//  ----------------------------------- //
 //           allocator-impl             //
 //  ----------------------------------- //
 #ifdef CORE_MEM_DEBUG
 #define CORE_DEBUG_ALLOCATOR_MARKER (void*)0xFFFFFFFFFFFFFFFF
-void *_std_alloc(void *self, size_t size);
-void *_std_realloc(void *self, void *mem, size_t size);
-void _std_free(void *self, void *_block);
 Allocator std_alloc = {
     .self = NULL,
-    .alloc = _std_alloc,
-    .realloc = _std_realloc,
-    .free = _std_free,
+    .alloc = CORE_UNDERLYING_ALLOC,
+    .realloc = CORE_UNDERLYING_REALLOC,
+    .free = CORE_UNDERLYING_FREE,
 };
 
 Allocator default_allocator;
@@ -1251,6 +1328,7 @@ void allocator_free(Allocator *self, void *_block) {
 }
 #endif
 
+#ifndef CORE_NO_STD
 void *_std_alloc(void *self, size_t size) {
     CORE_UNUSED(self);
     return malloc(size);
@@ -1265,6 +1343,38 @@ void _std_free(void *self, void *_block) {
     CORE_UNUSED(self);
     free(_block);
 }
+#else
+static char _core_no_std_heap[CORE_NO_STD_HEAP_SIZE];
+static size_t _core_no_std_heap_pos = 0;
+
+typedef struct { size_t size; } _CoreBumpHdr;
+
+void *_core_bump_alloc(void *self, size_t size) {
+    CORE_UNUSED(self);
+    size = (size + 15) & ~(size_t)15;
+    size_t total = sizeof(_CoreBumpHdr) + size;
+    if(_core_no_std_heap_pos + total > CORE_NO_STD_HEAP_SIZE) {
+        return NULL;
+    }
+    _CoreBumpHdr *hdr = (_CoreBumpHdr*)&_core_no_std_heap[_core_no_std_heap_pos];
+    hdr->size = size;
+    _core_no_std_heap_pos += total;
+    return (char*)hdr + sizeof(_CoreBumpHdr);
+}
+
+void *_core_bump_realloc(void *self, void *mem, size_t size) {
+    if(!mem) {
+        return _core_bump_alloc(self, size);
+    }
+    _CoreBumpHdr *hdr = (_CoreBumpHdr*)((char*)mem - sizeof(_CoreBumpHdr));
+    size_t old = hdr->size;
+    void *new_mem = _core_bump_alloc(self, size);
+    if(new_mem) {
+        memcpy(new_mem, mem, old < size ? old : size);
+    }
+    return new_mem;
+}
+#endif
 
 void *_core_noop_alloc(void *self, size_t size) {
     CORE_UNUSED(self);
@@ -1288,19 +1398,304 @@ Allocator default_allocator = {
 #ifdef CORE_MEM_DEBUG
     .self = CORE_DEBUG_ALLOCATOR_MARKER,
 #endif
-    .alloc = _std_alloc,
-    .realloc = _std_realloc,
-    .free = _std_free,
+    .alloc = CORE_UNDERLYING_ALLOC,
+    .realloc = CORE_UNDERLYING_REALLOC,
+    .free = CORE_UNDERLYING_FREE,
 };
 
-#ifndef strlen
+#ifdef CORE_NO_STD
 size_t strlen(const char *str) {
     CORE_ASSERT(str != NULL && "cannot pass NULL to strlen");
     int len = 0;
     while(*str++) len++;
     return len;
 }
-#endif//CORE_NO_STD
+
+//  ------------------------------------- //
+//      freestanding libc replacements    //
+//  ------------------------------------- //
+int isspace(int c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+
+int isdigit(int c) {
+    return c >= '0' && c <= '9';
+}
+
+int isalpha(int c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+int isalnum(int c) {
+    return isalpha(c) || isdigit(c);
+}
+
+double strtod(const char *nptr, char **endptr) {
+    const char *p = nptr;
+    while(isspace((unsigned char)*p)) p++;
+    int sign = 1;
+    if(*p == '+' || *p == '-') {
+        if(*p == '-') sign = -1;
+        p++;
+    }
+    double value = 0.0;
+    while(isdigit((unsigned char)*p)) {
+        value = value * 10.0 + (double)(*p - '0');
+        p++;
+    }
+    if(*p == '.') {
+        p++;
+        double frac = 0.1;
+        while(isdigit((unsigned char)*p)) {
+            value += (double)(*p - '0') * frac;
+            frac *= 0.1;
+            p++;
+        }
+    }
+    if(*p == 'e' || *p == 'E') {
+        p++;
+        int esign = 1;
+        if(*p == '+' || *p == '-') {
+            if(*p == '-') esign = -1;
+            p++;
+        }
+        int exp = 0;
+        while(isdigit((unsigned char)*p)) {
+            exp = exp * 10 + (*p - '0');
+            p++;
+        }
+        double e = 1.0;
+        for(int i = 0; i < exp; i++) e *= 10.0;
+        value = (esign < 0) ? value / e : value * e;
+    }
+    value *= sign;
+    if(endptr) *endptr = (char*)p;
+    return value;
+}
+
+static size_t _core_utoa(char *out, unsigned long long v, int base, int upper) {
+    static const char *digits = "0123456789abcdef0123456789ABCDEF";
+    char tmp[64];
+    size_t i = 0;
+    if(v == 0) {
+        tmp[i++] = '0';
+    }
+    while(v > 0) {
+        tmp[i++] = digits[(v % (unsigned)base) + (upper ? 16 : 0)];
+        v /= (unsigned)base;
+    }
+    for(size_t j = 0; j < i; j++) {
+        out[j] = tmp[i - 1 - j];
+    }
+    return i;
+}
+
+static size_t _core_itoa(char *out, long long v, int base, int upper) {
+    if(v < 0) {
+        out[0] = '-';
+        unsigned long long mag = (unsigned long long)(-(v + 1)) + 1;
+        return 1 + _core_utoa(out + 1, mag, base, upper);
+    }
+    return _core_utoa(out, (unsigned long long)v, base, upper);
+}
+
+static size_t _core_dtoa(char *out, double v, int prec, char spec) {
+    char tmp[64];
+    size_t n = 0;
+    (void)spec;
+    if(v < 0) { tmp[n++] = '-'; v = -v; }
+    if(v != v) {
+        tmp[n++] = 'n'; tmp[n++] = 'a'; tmp[n++] = 'n';
+        memcpy(out, tmp, n);
+        return n;
+    }
+    if(v > 1e308) {
+        tmp[n++] = 'i'; tmp[n++] = 'n'; tmp[n++] = 'f';
+        memcpy(out, tmp, n);
+        return n;
+    }
+    if(prec < 0) prec = 6;
+    unsigned long long ip = (unsigned long long)v;
+    n += _core_utoa(tmp + n, ip, 10, 0);
+    if(prec > 0) {
+        tmp[n++] = '.';
+        double frac = v - (double)ip;
+        for(int i = 0; i < prec; i++) {
+            frac *= 10.0;
+            int d = (int)frac;
+            tmp[n++] = (char)('0' + d);
+            frac -= (double)d;
+        }
+    }
+    memcpy(out, tmp, n);
+    return n;
+}
+
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
+    size_t pos = 0;
+    for(const char *p = fmt; *p; p++) {
+        if(*p != '%') {
+            if(pos + 1 < size) buf[pos] = *p;
+            pos++;
+            continue;
+        }
+        p++;
+        if(*p == '%') {
+            if(pos + 1 < size) buf[pos] = '%';
+            pos++;
+            continue;
+        }
+        int left = 0, zero = 0;
+        while(*p == '-' || *p == '0' || *p == ' ' || *p == '+' || *p == '#') {
+            if(*p == '-') left = 1;
+            else if(*p == '0') zero = 1;
+            p++;
+        }
+        int width = 0;
+        if(*p == '*') {
+            width = va_arg(ap, int);
+            p++;
+        } else {
+            while(isdigit((unsigned char)*p)) {
+                width = width * 10 + (*p - '0');
+                p++;
+            }
+        }
+        int prec = -1;
+        if(*p == '.') {
+            p++;
+            if(*p == '*') {
+                prec = va_arg(ap, int);
+                p++;
+            } else {
+                prec = 0;
+                while(isdigit((unsigned char)*p)) {
+                    prec = prec * 10 + (*p - '0');
+                    p++;
+                }
+            }
+        }
+        int lenmod = 0;
+        if(*p == 'l') {
+            lenmod = 1; p++;
+            if(*p == 'l') { lenmod = 2; p++; }
+        } else if(*p == 'z') {
+            lenmod = 3; p++;
+        } else if(*p == 'h') {
+            p++;
+            if(*p == 'h') p++;
+        }
+        char spec = *p;
+        char conv[256];
+        size_t clen = 0;
+        switch(spec) {
+        case 'd': case 'i': {
+            long long sv;
+            if(lenmod == 2) sv = va_arg(ap, long long);
+            else if(lenmod == 3) sv = (long long)va_arg(ap, size_t);
+            else sv = va_arg(ap, int);
+            clen = _core_itoa(conv, sv, 10, 0);
+        } break;
+        case 'u': {
+            unsigned long long uv;
+            if(lenmod == 2) uv = va_arg(ap, unsigned long long);
+            else if(lenmod == 3) uv = va_arg(ap, size_t);
+            else uv = va_arg(ap, unsigned int);
+            clen = _core_utoa(conv, uv, 10, 0);
+        } break;
+        case 'o': {
+            unsigned long long uv = (lenmod == 2) ? va_arg(ap, unsigned long long)
+                                                  : (unsigned long long)va_arg(ap, unsigned int);
+            clen = _core_utoa(conv, uv, 8, 0);
+        } break;
+        case 'x': case 'X': {
+            unsigned long long uv = (lenmod == 2) ? va_arg(ap, unsigned long long)
+                                                  : (unsigned long long)va_arg(ap, unsigned int);
+            clen = _core_utoa(conv, uv, 16, spec == 'X');
+        } break;
+        case 'c': {
+            conv[0] = (char)va_arg(ap, int);
+            clen = 1;
+        } break;
+        case 's': {
+            const char *s = va_arg(ap, const char*);
+            if(!s) s = "(null)";
+            clen = 0;
+            while(*s && clen < sizeof(conv) - 1) {
+                conv[clen++] = *s++;
+            }
+        } break;
+        case 'p': {
+            unsigned long long uv = (unsigned long long)(size_t)va_arg(ap, void*);
+            clen = _core_utoa(conv, uv, 16, 0);
+        } break;
+        case 'f': case 'F': case 'g': case 'G': case 'e': case 'E': {
+            double dv = va_arg(ap, double);
+            clen = _core_dtoa(conv, dv, prec < 0 ? 6 : prec, spec);
+        } break;
+        case 'n': {
+            int *np = va_arg(ap, int*);
+            if(np) *np = (int)pos;
+        } break;
+        default: {
+            conv[0] = spec;
+            clen = 1;
+        } break;
+        }
+
+        if(spec == 'n') {
+            continue;
+        }
+
+        int pad = width - (int)clen;
+        if(pad > 0) {
+            char padc = zero ? '0' : ' ';
+            if(!left) {
+                size_t start = 0;
+                if(zero && clen > 0 && (conv[0] == '-' || conv[0] == '+' || conv[0] == ' ')) {
+                    if(pos + 1 < size) buf[pos] = conv[0];
+                    pos++;
+                    start = 1;
+                }
+                for(int i = 0; i < pad; i++) {
+                    if(pos + 1 < size) buf[pos] = padc;
+                    pos++;
+                }
+                for(size_t i = start; i < clen; i++) {
+                    if(pos + 1 < size) buf[pos] = conv[i];
+                    pos++;
+                }
+            } else {
+                for(size_t i = 0; i < clen; i++) {
+                    if(pos + 1 < size) buf[pos] = conv[i];
+                    pos++;
+                }
+                for(int i = 0; i < pad; i++) {
+                    if(pos + 1 < size) buf[pos] = ' ';
+                    pos++;
+                }
+            }
+        } else {
+            for(size_t i = 0; i < clen; i++) {
+                if(pos + 1 < size) buf[pos] = conv[i];
+                pos++;
+            }
+        }
+    }
+    if(size > 0 && pos < size) {
+        buf[pos] = '\0';
+    }
+    return (int)pos;
+}
+
+int snprintf(char *buf, size_t size, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = vsnprintf(buf, size, fmt, ap);
+    va_end(ap);
+    return ret;
+}
+#endif
 
 RingBuffer ringbuffer_init_impl(OptAllocArg args) {
     Allocator alloc = ALLOC_ARG_OR_DEF(args);
@@ -1754,7 +2149,7 @@ StaticArena static_arena_new_impl(size_t size, char *buffer) {
 
 void *static_arena_alloc(StaticArena *self, size_t size) {
     if(self->buffer == NULL || self->current_alloc == NULL) {
-        CORE_ASSERT(self->buffer == NULL || self->current_alloc == NULL && "static_arena_alloc() cannot alloc in ");
+        CORE_ASSERT((self->buffer == NULL || self->current_alloc == NULL) && "static_arena_alloc() cannot alloc in ");
         return NULL;
     }
 
@@ -1794,6 +2189,7 @@ void static_arena_print_stats(StaticArena *self) {
 //  ----------------------------------- //
 //               print-impl             //
 //  ----------------------------------- //
+#ifndef CORE_NO_STD
 i32 print(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -1833,9 +2229,59 @@ i32 fprintln(FileHandle stream, const char *fmt, ...) {
     fprint(file_raw(stream), "\n");
     return ret;
 }
+#else
+//  when there is no standard library there is no `stdout`/`stderr`, so output
+//  is forwarded to `core_stdout_write`/`core_stderr_write`. provide your own
+//  (non-static) definitions of these to route the text wherever you need.
+#ifndef CORE_PRINTF_BUF_SIZE
+#define CORE_PRINTF_BUF_SIZE 1024
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+#elif defined(_MSC_VER)
+__pragma(comment(linker, "/alternatename:core_stdout_write=core_stdout_write_default"))
+#endif
+void core_stdout_write(const char *data, size_t len) {
+    (void)data; (void)len;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+#endif
+void core_stderr_write(const char *data, size_t len) {
+    (void)data; (void)len;
+}
+
+static size_t _core_vprint(void (*write_fn)(const char *, size_t), const char *fmt, va_list args) {
+    char buf[CORE_PRINTF_BUF_SIZE];
+    i32 ret = vsnprintf(buf, sizeof(buf), fmt, args);
+    size_t n = (size_t)(ret < 0 ? 0 : (ret < (i32)sizeof(buf) ? ret : (i32)sizeof(buf) - 1));
+    write_fn(buf, n);
+    return n;
+}
+
+i32 print(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    size_t n = _core_vprint(core_stdout_write, fmt, args);
+    va_end(args);
+    return (i32)n;
+}
+
+i32 println(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    size_t n = _core_vprint(core_stdout_write, fmt, args);
+    va_end(args);
+    core_stdout_write("\n", 1);
+    return (i32)(n + 1);
+}
+#endif
 
 void core_log(LogLevel level, const char *fmt, ...)
 {
+#ifndef CORE_NO_STD
     switch (level) {
     case CORE_TRACE:
         fprintf(stderr, "[TRACE] ");
@@ -1864,10 +2310,29 @@ void core_log(LogLevel level, const char *fmt, ...)
 #ifdef CORE_FLUSH_IO
     fflush(stdout);
 #endif
+#else
+    const char *prefix = "";
+    switch (level) {
+    case CORE_TRACE:   prefix = "[TRACE] ";   break;
+    case CORE_DEBUG:   prefix = "[DEBUG] ";   break;
+    case CORE_INFO:    prefix = "[INFO] ";    break;
+    case CORE_WARNING: prefix = "[WARNING] "; break;
+    case CORE_ERROR:   prefix = "[ERROR] ";   break;
+    default: CORE_UNREACHABLE("core_log()");
+    }
+    core_stderr_write(prefix, strlen(prefix));
+
+    va_list args;
+    va_start(args, fmt);
+    _core_vprint(core_stderr_write, fmt, args);
+    va_end(args);
+    core_stderr_write("\n", 1);
+#endif
 }
 
 void __core_log_file(LogLevel level, const char *file, const char *fmt, ...)
 {
+#ifndef CORE_NO_STD
     switch (level) {
     case CORE_TRACE:
         fprintf(stderr, "[TRACE]:%s: ", file);
@@ -1895,6 +2360,26 @@ void __core_log_file(LogLevel level, const char *file, const char *fmt, ...)
     fprintf(stderr, "\n");
 #ifdef CORE_FLUSH_IO
     fflush(stdout);
+#endif
+#else
+    const char *prefix = "";
+    switch (level) {
+    case CORE_TRACE:   prefix = "[TRACE]:";   break;
+    case CORE_DEBUG:   prefix = "[DEBUG]:";   break;
+    case CORE_INFO:    prefix = "[INFO]:";    break;
+    case CORE_WARNING: prefix = "[WARNING]:"; break;
+    case CORE_ERROR:   prefix = "[ERROR]:";   break;
+    default: CORE_UNREACHABLE("core_log()");
+    }
+    core_stderr_write(prefix, strlen(prefix));
+    core_stderr_write(file, strlen(file));
+    core_stderr_write(": ", 2);
+
+    va_list args;
+    va_start(args, fmt);
+    _core_vprint(core_stderr_write, fmt, args);
+    va_end(args);
+    core_stderr_write("\n", 1);
 #endif
 }
 
@@ -1993,7 +2478,9 @@ void context_deinit(void)  {
 
 CORE_CONSTRUCTOR void context_init(void)  {
     _core_context_init();
+#ifndef CORE_NO_STD
     atexit(context_deinit);
+#endif
 }
 
 //  ----------------------------------- //

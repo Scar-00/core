@@ -1,11 +1,12 @@
 #define CORE_NO_ENTRY
+#define CORE_IMPLEMENTATION
 #include "../core.h"
 
 int main(void) {
     JSON json = json_parse(sv("{\"project\":\"core\",\"stable\":true,\"items\":[1,2,3]}"));
-    String pretty = json_to_string(&json, .pretty_print = 2);
+    String pretty = json_to_string(&json, .pretty_print = 4);
 
-    println("json = "STRING_FMT, STRING_ARG(&pretty));
+    println("json = "STRING_FMT, STRING_ARG(pretty));
 
     string_destroy(&pretty);
     json_free(json);

@@ -1,7 +1,7 @@
 #define CORE_IMPLEMENTATION
 #define CORE_DEBUG_ASSERT
 #define CORE_MEM_DEBUG
-//#define CORE_FLUSH_IO
+#define CORE_NO_STD
 #include "core.h"
 
 int core_main() {

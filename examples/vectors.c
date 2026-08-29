@@ -1,4 +1,5 @@
 #define CORE_NO_ENTRY
+#define CORE_IMPLEMENTATION
 #include "../core.h"
 
 static bool int_eq(void *lhs, void *rhs) {
